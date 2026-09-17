@@ -5,6 +5,13 @@
 인식한 뒤 이번 달 데이터로 채운다. 슬라이드 순서가 아니라 표 내용으로 인식하므로
 슬라이드가 재배치돼도 동작한다. 스크린샷 기반 수기 표(운영 캘린더, 팔로워
 추이/성별연령 차트, 검색 노출 현황, 이벤트/제휴 소개 등)는 건드리지 않는다.
+
+로우데이터(엑셀) 쪽은 합계/평균/누적 등을 전월과 같은 '살아있는 수식'으로 쓰기
+때문에 openpyxl로는 그 계산값을 읽을 수 없다(엑셀이 열어야 계산됨). 그래서 PPT에
+필요한 실제 숫자는 (1) 이번 달 몫은 build_raw_data가 계산 과정에서 이미 만들어
+둔 파이썬 값(block_cache)을 그대로 쓰고, (2) 전월 이전 몫은 전월 최종본을
+data_only=True로 한 번 더 읽은 스냅샷(wb_data, 엑셀이 마지막 저장 때 캐시해 둔
+계산값)에서 가져온다.
 """
 import datetime as dt
 from pptx import Presentation
@@ -15,8 +22,6 @@ from core.ppt_table import (
 )
 from core.excel_block import CONFIRM_NEEDED
 from core.formatters import month_to_int
-
-MONTH_COL_BASE = {"kpi": 3, "ad_all_month": None}  # 참고용
 
 
 def _fmt_num(v):
@@ -40,7 +45,7 @@ def _fmt_date_md(d):
     return f"{d.month}/{d.day}({weekday})"
 
 
-def _change_text_and_color(prev_val, cur_val, cell, is_pct_points=False):
+def _change_text_and_color(prev_val, cur_val, cell):
     if not isinstance(prev_val, (int, float)) or not isinstance(cur_val, (int, float)) or prev_val == 0:
         set_cell_text(cell, CONFIRM_NEEDED)
         set_run_color(cell, NEUTRAL_COLOR)
@@ -54,36 +59,6 @@ def _change_text_and_color(prev_val, cur_val, cell, is_pct_points=False):
         set_run_color(cell, DOWN_COLOR)
     else:
         set_cell_text(cell, "-")
-
-
-# ---------------------------------------------------------------------------
-# 엑셀(방금 만든 취합본)에서 값 읽어오기
-# ---------------------------------------------------------------------------
-
-def _find_header_row(ws, label, col, search_rows=20):
-    for r in range(1, search_rows + 1):
-        if ws.cell(row=r, column=col).value == label:
-            return r
-    return None
-
-
-def _last_block_data_rows(ws, header_row, topic_col):
-    totals = [r for r in range(header_row + 1, ws.max_row + 1)
-              if ws.cell(row=r, column=topic_col).value == "합계"]
-    if not totals:
-        return None
-    last_total = totals[-1]
-    avg_row = last_total - 1
-    prev_total = totals[-2] if len(totals) >= 2 else header_row
-    return prev_total + 1, avg_row, avg_row, last_total  # (data_start, data_end_exclusive, avg_row, total_row)
-
-
-def _detect_topic_col(ws, header_row, default=5, search_rows=40):
-    for r in range(header_row + 1, header_row + 1 + search_rows):
-        for c in range(2, 12):
-            if ws.cell(row=r, column=c).value in ("평균", "합계"):
-                return c
-    return default
 
 
 def _numval(ws_live, ws_data, row, col):
@@ -100,84 +75,77 @@ def _numval(ws_live, ws_data, row, col):
 
 
 class XlsxSource:
-    """방금 build_raw_data로 만든 워크북에서 PPT에 필요한 값을 뽑아주는 헬퍼.
+    """방금 build_raw_data로 만든 워크북 + block_cache(파이썬 계산값)에서
+    PPT에 필요한 값을 뽑아주는 헬퍼."""
 
-    wb_data: 같은 전월 최종본을 data_only=True로 읽은 스냅샷(build_raw_data가 만든 것과
-    동일). 전월 시트에 남아있는 수식 셀의 계산값을 읽을 때 쓴다."""
-
-    def __init__(self, wb, target_month, wb_data=None):
+    def __init__(self, wb, target_month, block_cache, wb_data=None):
         self.wb = wb
         self.wb_data = wb_data
+        self.block_cache = block_cache or {}
+        self.summary = self.block_cache.get("_summary", {})
         self.target_month = target_month
         self.month_num = month_to_int(target_month)
 
+    def _cumulative(self, sheet_for_history, row, col_base, first_month, current_value):
+        """월별 '열'에 값이 쌓이는 표(운영요약의 KPI/광고비 표)에서, 이번 달보다
+        이전 달들은 data_only 스냅샷으로, 이번 달은 방금 계산한 파이썬 값으로
+        더해 진짜 누적값을 만든다."""
+        ws = self.wb[sheet_for_history]
+        ws_data = self.wb_data[sheet_for_history] if self.wb_data else None
+        total = 0
+        for m in range(first_month, self.month_num):
+            c = col_base + (m - first_month)
+            v = _numval(ws, ws_data, row, c)
+            if v:
+                total += v
+        if isinstance(current_value, (int, float)):
+            total += current_value
+        return total
+
     # -- 운영요약 KPI --------------------------------------------------
-    def kpi_row(self, metric_row):
-        """운영요약 시트의 14~17행(발행수/도달수/영상조회수/참여수) 한 행을 dict로."""
+    def kpi_row(self, metric_row, current_value):
         ws = self.wb["운영요약"]
-        month_col = 3 + (self.month_num - 7)
-        return {
-            "cur": ws.cell(row=metric_row, column=month_col).value,
-            "cum": ws.cell(row=metric_row, column=9).value,
-            "target": ws.cell(row=metric_row, column=10).value,
-            "rate": ws.cell(row=metric_row, column=11).value,
-        }
+        cum = self._cumulative("운영요약", metric_row, 3, 7, current_value)
+        target = ws.cell(row=metric_row, column=10).value  # J열: 고정 목표치(항상 리터럴)
+        rate = (cum / target) if isinstance(target, (int, float)) and target else None
+        return {"cur": current_value, "cum": cum, "target": target, "rate": rate}
 
     # -- 채널(인스타/블로그) 월 요약 -----------------------------------
-    def channel_summary(self, sheet, prev_month_num):
-        """인스타그램/블로그 시트의 월별 요약(행6~11)에서 전월·당월 값을 읽는다.
-        반환: {"발행수":(전월,당월), "도달수":(전월,당월), ...}"""
+    def channel_summary(self, sheet, prev_month_num, cur_values):
+        """인스타그램/블로그 시트의 월별 요약(행6~11)에서 전월 값은 data_only
+        스냅샷으로 읽고, 당월 값은 이번 실행에서 계산한 파이썬 값을 그대로 쓴다.
+        cur_values: {"발행수":.., "지표2":.., "지표3":.., "지표4":..} (없는 키는 None)"""
         ws = self.wb[sheet]
         ws_data = self.wb_data[sheet] if self.wb_data else None
         cols = {"발행수": 4, "지표2": 5, "지표3": 6, "지표4": 7}
-        cur_row = 6 + (self.month_num - 7)
         prev_row = 6 + (prev_month_num - 7)
         out = {}
         for name, c in cols.items():
             prev_v = _numval(ws, ws_data, prev_row, c)
-            cur_v = ws.cell(row=cur_row, column=c).value  # 이번 실행에서 방금 쓴 값(리터럴)
-            out[name] = (prev_v, cur_v)
+            out[name] = (prev_v, cur_values.get(name))
         return out
 
     # -- 콘텐츠 발행 내역(인스타/블로그 공통), AD 데이터 참여/도달/동영상조회 공통 --
     def block_rows(self, sheet):
-        """(데이터 행 리스트, 평균 행 값, 합계 행 값)을 반환. 각 행은
-        B열부터 시작하는 값 리스트."""
-        ws = self.wb[sheet]
-        header_row = None
-        for r in range(1, 20):
-            if ws.cell(row=r, column=2).value == "NO.":
-                header_row = r
-                break
-        topic_col = _detect_topic_col(ws, header_row)
-        block = _last_block_data_rows(ws, header_row, topic_col)
-        if not block:
+        """block_cache에 저장해 둔 이번 달 (데이터 행, 평균 행, 합계 행)을 그대로 준다."""
+        entry = self.block_cache.get(sheet)
+        if not entry:
             return [], None, None
-        data_start, data_end, avg_row, total_row = block
-        rows = []
-        for r in range(data_start, data_end):
-            values = [ws.cell(row=r, column=c).value for c in range(2, ws.max_column + 1)]
-            rows.append(values)
-        avgs = [ws.cell(row=avg_row, column=c).value for c in range(2, ws.max_column + 1)]
-        totals = [ws.cell(row=total_row, column=c).value for c in range(2, ws.max_column + 1)]
-        return rows, avgs, totals
+        return entry["rows"], entry["avg"], entry["total"]
 
-    # -- AD 데이터(전체) 상단 월별 요약 --------------------------------
-    def ad_month_summary(self, prev_month_num):
-        ws = self.wb["AD 데이터(전체)"]
-        cur_row = 5 + (self.month_num - 7)
-        prev_row = 5 + (prev_month_num - 7)
-        cur = {c: ws.cell(row=cur_row, column=c).value for c in range(5, 9)}
-        prev = {c: ws.cell(row=prev_row, column=c).value for c in range(5, 9)}
-        return prev, cur
+    # -- AD 지출 누적/예산 ------------------------------------------------
+    def ad_cumulative_spend(self, ad_type, row):
+        current = self.summary.get("ad_totals_by_type", {}).get(ad_type, {}).get("지출금액")
+        return self._cumulative("운영요약", row, 3, 7, current)
 
     def budget_summary(self):
         ws = self.wb["운영요약"]
-        return {
-            "cum": ws.cell(row=32, column=3).value,
-            "remain": ws.cell(row=32, column=4).value,
-            "total": ws.cell(row=32, column=5).value,
-        }
+        ws_data = self.wb_data["운영요약"] if self.wb_data else None
+        total_budget = _numval(ws, ws_data, 32, 5)  # E32: 총 가용예산(고정값)
+        cum = sum(self.ad_cumulative_spend(t, r) for t, r in
+                  (("참여", 25), ("도달", 26), ("동영상조회", 27)))
+        remain = (total_budget - cum) if isinstance(total_budget, (int, float)) else None
+        return {"cum": cum, "remain": remain, "total": total_budget}
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +161,6 @@ def _classify_table(table):
         header = _row_texts(table, 0)
     except IndexError:
         return None
-    ncols = len(header)
 
     if header and header[0] == "구분" and "누적" in header and "목표" in header:
         return "kpi"
@@ -305,6 +272,7 @@ def fill_data_table(table, spec, rows, avgs, totals, url_idx=None, url_ppt_col=N
 # ---------------------------------------------------------------------------
 
 _KPI_METRIC_ROW = {1: 14, 2: 15, 3: 16, 4: 17}  # ppt 표 row -> 운영요약 시트 row
+_KPI_CUR_KEY = {14: "발행수", 15: "도달수", 16: "영상조회수", 17: "참여수"}
 
 
 def fill_kpi_table(table, src: XlsxSource, confirm):
@@ -314,8 +282,10 @@ def fill_kpi_table(table, src: XlsxSource, confirm):
         return
     col = header.index(src.target_month)
     cum_col, target_col, rate_col = header.index("누적"), header.index("목표"), header.index("달성률")
+    instagram_totals = src.summary.get("instagram_totals", {})
     for r, metric_row in _KPI_METRIC_ROW.items():
-        d = src.kpi_row(metric_row)
+        cur_value = instagram_totals.get(_KPI_CUR_KEY[metric_row])
+        d = src.kpi_row(metric_row, cur_value)
         set_cell_text(table.rows[r].cells[col], _fmt_num(d["cur"]))
         set_cell_text(table.rows[r].cells[cum_col], _fmt_num(d["cum"]))
         set_cell_text(table.rows[r].cells[target_col], _fmt_num(d["target"]))
@@ -345,7 +315,15 @@ def fill_channel_compare_table(table, sheet, src: XlsxSource, confirm):
         return
     prev_month_num = src.month_num - 1
     prev_label = header[2]  # 이번 실행 전 '당월' 헤더 -> 새 '전월' 헤더
-    summary = src.channel_summary(sheet, prev_month_num)
+
+    if sheet == "인스타그램":
+        t = src.summary.get("instagram_totals", {})
+        cur_values = {"발행수": t.get("발행수"), "지표2": t.get("도달수"),
+                      "지표3": t.get("영상조회수"), "지표4": t.get("참여수")}
+    else:
+        t = src.summary.get("blog_totals", {})
+        cur_values = {"발행수": t.get("발행수")}
+    summary = src.channel_summary(sheet, prev_month_num, cur_values)
 
     set_cell_text(table.rows[0].cells[1], prev_label)
     set_cell_text(table.rows[0].cells[2], src.target_month)
@@ -357,7 +335,7 @@ def fill_channel_compare_table(table, sheet, src: XlsxSource, confirm):
         set_cell_text(table.rows[r].cells[1], prev_display)
 
         metric = _CHANNEL_ROW_SOURCE.get(label)
-        if metric is None:
+        if metric is None or cur_values.get(metric) is None:
             set_cell_text(table.rows[r].cells[2], CONFIRM_NEEDED)
             confirm.add("PPT/채널요약", f"{sheet} - {label}", "자동 산출 소스가 없어 확인 필요")
         else:
@@ -371,16 +349,14 @@ def fill_channel_compare_table(table, sheet, src: XlsxSource, confirm):
 
 def fill_ad_overview_table(table, src: XlsxSource, confirm):
     ws = src.wb["운영요약"]
-    header = _row_texts(table, 0)
     set_cell_text(table.rows[0].cells[1], ws.cell(row=36, column=3).value)
     set_cell_text(table.rows[0].cells[2], ws.cell(row=36, column=4).value)
-    row_map = {1: 37, 2: 38, 3: 39, 4: 40, 5: 41, 6: 42, 7: 43, 8: 44, 9: 45, 10: 46, 11: 47, 12: 48, 13: 49}
-    for r, src_row in row_map.items():
-        if r >= len(table.rows):
-            continue
-        prev_v = ws.cell(row=src_row, column=3).value
-        cur_v = ws.cell(row=src_row, column=4).value
-        chg_v = ws.cell(row=src_row, column=5).value
+
+    for r in range(1, len(table.rows)):
+        row_num = 36 + r
+        prev_v = ws.cell(row=row_num, column=3).value
+        cur_v = ws.cell(row=row_num, column=4).value
+        chg_v = ws.cell(row=row_num, column=5).value
         set_cell_text(table.rows[r].cells[1], _fmt_num(prev_v) if isinstance(prev_v, (int, float)) else (prev_v or ""))
         set_cell_text(table.rows[r].cells[2], _fmt_num(cur_v) if isinstance(cur_v, (int, float)) else (cur_v or ""))
         if isinstance(chg_v, (int, float)):
@@ -402,9 +378,9 @@ def fill_budget_summary_table(table, src: XlsxSource):
 # 최상위: PPT 조합
 # ---------------------------------------------------------------------------
 
-def build_ppt(prev_ppt_file, wb, target_month, confirm, wb_data=None):
+def build_ppt(prev_ppt_file, wb, target_month, confirm, block_cache=None, wb_data=None):
     prs = Presentation(prev_ppt_file)
-    src = XlsxSource(wb, target_month, wb_data=wb_data)
+    src = XlsxSource(wb, target_month, block_cache, wb_data=wb_data)
 
     for slide in prs.slides:
         for shape in slide.shapes:

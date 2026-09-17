@@ -12,6 +12,7 @@
 """
 import copy
 from openpyxl.utils import get_column_letter
+from openpyxl.formula.translate import Translator
 
 CONFIRM_NEEDED = "확인 필요"
 
@@ -62,3 +63,22 @@ def write_row(ws, row, col_start, values):
 
 def col_letter(idx):
     return get_column_letter(idx)
+
+
+def range_formula(func, col_idx, r1, r2):
+    """예: range_formula('SUM', 8, 23, 33) -> '=SUM(H23:H33)'."""
+    L = get_column_letter(col_idx)
+    return f"={func}({L}{r1}:{L}{r2})"
+
+
+def copy_month_row_formula(ws, template_row, target_row, min_col, max_col):
+    """월별 요약 표(예: 인스타그램 시트 6~11행)처럼, 같은 서식의 수식이 아래로
+    드래그된 것과 동일한 패턴일 때(고정 범위 $C$14:$C$100 등은 그대로, 상대참조
+    C6→C7만 이동) 템플릿 행의 수식을 target_row 기준으로 번역해서 옮긴다.
+    수식이 아닌 셀(값/빈칸)은 건드리지 않는다."""
+    for c in range(min_col, max_col + 1):
+        src = ws.cell(row=template_row, column=c)
+        if isinstance(src.value, str) and src.value.startswith("="):
+            translated = Translator(src.value, origin=src.coordinate).translate_formula(
+                ws.cell(row=target_row, column=c).coordinate)
+            ws.cell(row=target_row, column=c, value=translated)

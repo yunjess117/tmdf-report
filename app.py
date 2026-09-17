@@ -132,9 +132,9 @@ with col3, st.container(border=True):
     content_raw_file = st.file_uploader(
         "★ 인스타그램 콘텐츠 원본 (플랫폼 CSV 또는 정리본 xlsx)",
         type=["csv", "xlsx"], key="content_raw")
-with col4, st.container(border=True):
-    card_top("green", "인스타그램 AD")
     ad_report_file = st.file_uploader("★ 인스타그램 AD 원본 (Meta Ads 내보내기)", type=["xlsx"], key="ad_report")
+with col4, st.container(border=True):
+    card_top("green", "제휴(오픈보고서)")
     partnership_file = st.file_uploader("제휴(인플루언서 체험단) 오픈 보고서 (선택)", type=["xlsx"], key="partnership")
 
 st.divider()
@@ -157,10 +157,12 @@ with col_step1, st.container(border=True):
             year_hint = dt.date.today().year
             publish_lists = parse_publish_list(publish_list_file, year_hint)
 
-            prev_bytes = io.BytesIO(prev_raw.getvalue())
-            prev_wb_probe = openpyxl.load_workbook(prev_bytes, data_only=True)
+            prev_bytes_raw = prev_raw.getvalue()
+            prev_wb_probe = openpyxl.load_workbook(io.BytesIO(prev_bytes_raw), data_only=True)
             target_month = detect_target_month(prev_wb_probe)
-            prev_bytes.seek(0)
+            # 전월 최종본에 남아있는 수식 셀은 openpyxl로 값을 못 읽으므로, 마지막 저장 때
+            # 엑셀이 캐시해 둔 계산값을 따로 확보해(data_only) PPT 단계에서 쓴다.
+            wb_data = openpyxl.load_workbook(io.BytesIO(prev_bytes_raw), data_only=True)
 
             content_perf = parse_content_raw(io.BytesIO(content_raw_file.getvalue()), content_raw_file.name)
             ad_rows = parse_ad_report(io.BytesIO(ad_report_file.getvalue()))
@@ -168,15 +170,16 @@ with col_step1, st.container(border=True):
             if partnership_file is not None:
                 partnership = parse_partnership_report(io.BytesIO(partnership_file.getvalue()))
 
-            wb, wb_data, confirm = build_raw_data(prev_bytes, target_month, publish_lists,
-                                                   content_perf, ad_rows, partnership)
+            wb, block_cache, confirm = build_raw_data(io.BytesIO(prev_bytes_raw), target_month,
+                                                       publish_lists, content_perf, ad_rows, partnership)
 
             out = io.BytesIO()
             wb.save(out)
             xlsx_bytes = out.getvalue()
 
             st.session_state.xlsx_result = {
-                "wb": wb, "wb_data": wb_data, "confirm_items": list(confirm.items),
+                "wb": wb, "wb_data": wb_data, "block_cache": block_cache,
+                "confirm_items": list(confirm.items),
                 "target_month": target_month, "xlsx_bytes": xlsx_bytes,
             }
             st.session_state.ppt_result = None  # 로우데이터를 다시 만들면 이전 PPT 결과는 무효화
@@ -211,7 +214,8 @@ with col_step2, st.container(border=True):
             confirm.items = list(xres["confirm_items"])
 
             ppt_bytes_in = io.BytesIO(prev_ppt.getvalue())
-            prs = build_ppt(ppt_bytes_in, xres["wb"], xres["target_month"], confirm, wb_data=xres["wb_data"])
+            prs = build_ppt(ppt_bytes_in, xres["wb"], xres["target_month"], confirm,
+                             block_cache=xres["block_cache"], wb_data=xres["wb_data"])
             ppt_out = io.BytesIO()
             prs.save(ppt_out)
 
