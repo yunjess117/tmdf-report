@@ -14,7 +14,7 @@ from core.excel_block import (
     CONFIRM_NEEDED, find_last_label_row, insert_block, write_row,
     range_formula, copy_month_row_formula, col_letter, copy_row_style,
 )
-from core.formatters import normalize_url_key
+from core.formatters import normalize_url_key, roundup_10000
 from core.matching import content_ad_values, match_ad_for_content, match_content_for_ad
 
 NO_COL = 2       # B열: NO.
@@ -145,7 +145,9 @@ def append_instagram_block(wb, target_month, pub_rows, content_perf, ad_rows, co
                          ad_spend, perf["조회"], perf["도달"], ad_reach, perf["팔로우"],
                          perf["좋아요"], perf["댓글"], perf["공유"], perf["저장"], perf["총반응"]])
 
-    avg_row, total_row = _write_agg_rows(ws, insert_at, n_data, topic_col, range(7, 18))
+    # range(8, 18) = H(광고비)~Q(총반응). G(유형)는 텍스트 열이라 합계/평균 대상에서 뺀다
+    # (전월 최종본에도 유형 열은 평균/합계 행이 비어 있음).
+    avg_row, total_row = _write_agg_rows(ws, insert_at, n_data, topic_col, range(8, 18))
 
     def col(idx):
         return [row[idx] for row in py_rows]
@@ -268,21 +270,22 @@ def append_ad_type_block(wb, ad_type, target_month, ad_rows, content_rows, confi
             pub_date, title, ctype = content.pub_date, content.title, content.content_type
         camp_start = a.campaign_start if a.campaign_start else CONFIRM_NEEDED
         camp_end = a.campaign_end if a.campaign_end else CONFIRM_NEEDED
-        # AD 데이터 시트의 '지출 금액'은 광고 원본 그대로(raw)를 쓴다. 만원 단위 올림은
-        # 콘텐츠 시트의 '광고비' 컬럼에만 적용하는 규칙(LX세미콘 문서 기준)이라 여기선 하지 않는다.
+        # AD 데이터 시트의 '지출 금액'은 광고 원본 그대로(raw)를 쓴다. '광고예산'은 원본에
+        # 없으므로 지출 금액을 만원 단위로 올림한 값을 그대로 쓴다(예: 49,415 -> 50,000).
         spend = a.spend if a.spend is not None else CONFIRM_NEEDED
+        budget = roundup_10000(a.spend) if a.spend is not None else CONFIRM_NEEDED
         if info["has_vtr"]:
             vtr = (a.result / a.impressions) if a.result is not None and a.impressions else None
             values = [i + 1, target_month, pub_date, title, ctype, CONFIRM_NEEDED,
                       camp_start, camp_end, a.result, a.cost_per_result, vtr,
-                      a.impressions, a.reach, spend, CONFIRM_NEEDED]
+                      a.impressions, a.reach, spend, budget]
         else:
             values = [i + 1, target_month, pub_date, title, ctype, CONFIRM_NEEDED,
                       camp_start, camp_end, a.result, a.cost_per_result,
-                      a.impressions, a.reach, spend, CONFIRM_NEEDED]
+                      a.impressions, a.reach, spend, budget]
         write_row(ws, insert_at + i, 2, values)
         py_rows.append(list(values))
-        confirm.add(info["sheet"], f"{target_month} NO.{i+1}", "타깃/광고예산은 원본에 없어 확인 필요")
+        confirm.add(info["sheet"], f"{target_month} NO.{i+1}", "타깃은 원본에 없어 확인 필요")
 
     data_start, data_end = insert_at, insert_at + n_data - 1
     avg_row, total_row = insert_at + n_data, insert_at + n_data + 1
@@ -291,7 +294,7 @@ def append_ad_type_block(wb, ad_type, target_month, ad_rows, content_rows, confi
     ws.cell(row=total_row, column=topic_col, value="합계")
 
     scale = 1000 if ad_type == "도달" else 1  # 전월 최종본의 기존 수식 관례(도달만 *1000)를 그대로 따름
-    for name in ("결과", "노출", "도달", "지출"):
+    for name in ("결과", "노출", "도달", "지출", "예산"):
         c = cols[name]
         if n_data:
             ws.cell(row=avg_row, column=c, value=range_formula("AVERAGE", c, data_start, data_end))
@@ -324,7 +327,7 @@ def append_ad_type_block(wb, ad_type, target_month, ad_rows, content_rows, confi
     py_total = [None] * (max_col - 1)
     py_avg[topic_col - 2] = "평균"
     py_total[topic_col - 2] = "합계"
-    for name in ("결과", "노출", "도달", "지출"):
+    for name in ("결과", "노출", "도달", "지출", "예산"):
         idx0 = cols[name] - 2
         py_avg[idx0] = _avg(numcol(idx0))
         py_total[idx0] = _sum(numcol(idx0))
@@ -335,10 +338,10 @@ def append_ad_type_block(wb, ad_type, target_month, ad_rows, content_rows, confi
         py_avg[idx_vtr] = (py_avg[idx_res] / py_avg[idx_imp]) if py_avg[idx_imp] else None
         py_total[idx_vtr] = "-"
 
-    # 상단 월별 요약표(5~10행)의 target 달 행: 전월(5행)과 같은 COUNTIF/SUMIF 패턴 복제
+    # 상단 월별 요약표(5~10행)의 target 달 행: 전월(5행)과 같은 COUNTIF/SUMIF 패턴 복제.
+    # 광고예산(H열)도 이제 각 행에 실제 값(지출 만원 올림)이 들어가므로 SUMIF가 그대로 합산한다.
     summary_row = 5 + (_month_num(target_month) - 7)
     copy_month_row_formula(ws, template_row=5, target_row=summary_row, min_col=4, max_col=8)
-    ws.cell(row=summary_row, column=8, value=CONFIRM_NEEDED)  # 광고예산: 원본에 없음
 
     return ({"진행수량": n_data, "총결과": total_result, "지출금액": total_spend},
             {"rows": py_rows, "avg": py_avg, "total": py_total})
@@ -379,10 +382,11 @@ def append_ad_all_block(wb, target_month, ad_rows, content_rows, confirm):
         v2s = a.result if is_video else "-"
         v2s_cost = a.cost_per_result if is_video else "-"
         spend = a.spend if a.spend is not None else CONFIRM_NEEDED  # raw 지출(콘텐츠 시트만 만원 올림 적용)
+        budget = roundup_10000(a.spend) if a.spend is not None else CONFIRM_NEEDED  # 예산 = 지출 만원 올림
         values = [i + 1, target_month, pub_date, title, ctype, camp_start, camp_end,
                   a.result_type, a.result, a.cost_per_result, a.impressions, a.reach,
                   v2s, v2s_cost, vtr, a.link_clicks, a.cpc, a.ctr, a.cpm, spend,
-                  CONFIRM_NEEDED]
+                  budget]
         write_row(ws, insert_at + i, 2, values)
 
     # 월별 광고비 현황 행(5~10행)의 target 달 행: 전월(5행)의 SUMIF/SUMIFS 패턴을 그대로
@@ -397,14 +401,8 @@ def append_ad_all_block(wb, target_month, ad_rows, content_rows, confirm):
     if isinstance(prev_e, str) and prev_e.startswith("=") and prev_label:
         ws.cell(row=r, column=5, value=prev_e.replace(f'"{prev_label}"', f'"{target_month}"'))
     copy_month_row_formula(ws, template_row=prev_r, target_row=r, min_col=6, max_col=8)
-    # 이 수식들은 '예산'(V)열을 집계한다. 원본에 캠페인별 예산 데이터가 없어 각 행의
-    # 예산 칸을 '확인 필요'로 남기므로, 사람이 예산을 채워 넣기 전까지는 이 표와
-    # 운영요약의 '연간 광고비 지출 현황'(F/G/H열 참조)이 0으로 보인다. 수식 자체는
-    # 살아있으므로 예산만 채우면 자동으로 올바른 값이 계산된다.
-    if n_data:
-        confirm.add("AD 데이터(전체)", f"{target_month} 광고비 현황(E~H열)",
-                    "행별 '예산' 데이터가 없어 광고비(총합)/참여/도달/동영상조회 수식이 "
-                    "0으로 계산됩니다 - 각 행의 예산을 채우면 자동으로 반영됩니다")
+    # 이 수식들은 '예산'(V)열을 집계한다. 각 행의 예산을 지출 만원 올림 값으로 채워
+    # 넣으므로(위 budget), 사람이 따로 채우지 않아도 자동으로 집계된다.
 
     # 파이썬 계산값(참여/도달/동영상조회 raw 지출 합) - PPT/운영요약에서 사용.
     # 누적/잔여비/총예산 행(11~13)은 이미 고정 수식(=SUM(E5:E10) 등)이라 손대지 않는다.
