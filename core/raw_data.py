@@ -536,6 +536,11 @@ def update_operations_summary(wb, target_month, ad_totals_by_type):
         _set(r_avg, avg)
     total_spend_month = sum((ad_totals_by_type.get(t, {}).get("지출금액") or 0) for t in layout)
     _set(49, total_spend_month)
+    # 행37 E열('=D37-C37')과 행49 D열('=C28')은 전월 최종본에서도 리터럴이 아니라
+    # 살아있는 수식이었다(37행만 %가 아니라 건수 차이, 49행은 광고비 합계표를 참조).
+    # 위 _set()이 두 칸 다 값으로 덮어썼으므로 같은 수식 패턴으로 되돌린다.
+    ws.cell(row=37, column=5, value="=D37-C37")
+    ws.cell(row=49, column=4, value=f"={month_L}28")
 
 
 # ---------------------------------------------------------------------------
