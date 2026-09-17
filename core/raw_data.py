@@ -49,6 +49,21 @@ def _month_num(label: str) -> int:
     return int(str(label).rstrip("월"))
 
 
+def _numval(ws_live, ws_data, row, col):
+    """전월 최종본의 셀이 수식(예: '=SUM(...)')이면 openpyxl로는 계산된 숫자를
+    못 읽으므로, 같은 파일을 data_only=True로 한 번 더 읽어둔 스냅샷(ws_data)에서
+    캐시된 계산값을 대신 가져온다. 이번 실행에서 방금 써넣은 값은 이미 숫자
+    리터럴이라 ws_live에서 바로 읽힌다."""
+    v = ws_live.cell(row=row, column=col).value
+    if isinstance(v, (int, float)):
+        return v
+    if ws_data is not None:
+        v2 = ws_data.cell(row=row, column=col).value
+        if isinstance(v2, (int, float)):
+            return v2
+    return None
+
+
 # ---------------------------------------------------------------------------
 # 인스타그램 콘텐츠 시트
 # ---------------------------------------------------------------------------
@@ -277,7 +292,7 @@ def append_ad_type_block(wb, ad_type, target_month, ad_rows, content_rows, confi
 # AD 데이터(전체) — 참여/도달/동영상조회 원본 광고 행을 한 표로 통합
 # ---------------------------------------------------------------------------
 
-def append_ad_all_block(wb, target_month, ad_rows, content_rows, confirm):
+def append_ad_all_block(wb, wb_data, target_month, ad_rows, content_rows, confirm):
     ws = wb["AD 데이터(전체)"]
     header_row = None
     for r in range(1, 20):
@@ -336,10 +351,10 @@ def append_ad_all_block(wb, target_month, ad_rows, content_rows, confirm):
             cum_row = rr
             break
     if cum_row:
+        ws_data = wb_data["AD 데이터(전체)"] if wb_data else None
         month_rows = range(5, cum_row)
         for c in range(5, 9):
-            vals = [ws.cell(row=mr, column=c).value for mr in month_rows]
-            vals = [v for v in vals if isinstance(v, (int, float))]
+            vals = [_numval(ws, ws_data, mr, c) for mr in month_rows]
             ws.cell(row=cum_row, column=c, value=_sum(vals))
     return totals_by_type
 
@@ -413,8 +428,9 @@ def append_partnership_block(wb, target_month, insta_rows, blog_rows):
 # 운영요약 시트 — KPI/광고비 누적 표 갱신
 # ---------------------------------------------------------------------------
 
-def update_operations_summary(wb, target_month, instagram_totals, ad_totals_by_type, rounded_spend_by_type):
+def update_operations_summary(wb, wb_data, target_month, instagram_totals, ad_totals_by_type, rounded_spend_by_type):
     ws = wb["운영요약"]
+    ws_data = wb_data["운영요약"] if wb_data else None
     month_col = 3 + (_month_num(target_month) - 7)  # C=7월 ... H=12월
 
     # 콘텐츠 KPI (행14~17: 발행수/도달수/영상조회수/참여수), I=누적 J=목표(고정) K=달성률
@@ -422,8 +438,7 @@ def update_operations_summary(wb, target_month, instagram_totals, ad_totals_by_t
                 16: instagram_totals["영상조회수"], 17: instagram_totals["참여수"]}
     for row, value in kpi_rows.items():
         ws.cell(row=row, column=month_col, value=value)
-        vals = [ws.cell(row=row, column=c).value for c in range(3, 9)]
-        vals = [v for v in vals if isinstance(v, (int, float))]
+        vals = [_numval(ws, ws_data, row, c) for c in range(3, 9)]
         cum = _sum(vals)
         ws.cell(row=row, column=9, value=cum)
         target = ws.cell(row=row, column=10).value
@@ -449,16 +464,15 @@ def update_operations_summary(wb, target_month, instagram_totals, ad_totals_by_t
     total_spend_month = sum((rounded_spend_by_type.get(t) or 0) for t in type_row)
     ws.cell(row=28, column=month_col, value=total_spend_month)
     for row in (25, 26, 27, 28):
-        vals = [ws.cell(row=row, column=c).value for c in range(3, 9)]
-        vals = [v for v in vals if isinstance(v, (int, float))]
+        vals = [_numval(ws, ws_data, row, c) for c in range(3, 9)]
         ws.cell(row=row, column=9, value=_sum(vals))
-    total_budget = ws.cell(row=28, column=11).value  # K열 총 광고예산(고정값, 유지)
+    total_budget = _numval(ws, ws_data, 28, 11)  # K열 총 광고예산(고정값, 유지)
     cum_spend = ws.cell(row=28, column=9).value or 0
     if isinstance(total_budget, (int, float)):
         ws.cell(row=28, column=10, value=total_budget - cum_spend)
 
     # 광고비 지출 현황 요약 (행32, 최신 상태 1행으로 덮어씀)
-    total_budget_fixed = ws.cell(row=32, column=5).value  # 기존 총가용예산 유지
+    total_budget_fixed = _numval(ws, ws_data, 32, 5)  # 기존 총가용예산 유지
     ws.cell(row=32, column=2, value=target_month)
     ws.cell(row=32, column=3, value=cum_spend)
     if isinstance(total_budget_fixed, (int, float)):
@@ -467,7 +481,7 @@ def update_operations_summary(wb, target_month, instagram_totals, ad_totals_by_t
 
     # 월간 광고 요약 (행36 헤더 + 37~49, 전월/이번월/증감률 2열 비교표를 최신으로 교체)
     prev_label = ws.cell(row=36, column=4).value  # 기존 D열(직전 실행의 '이번월')이 새 '전월'이 됨
-    prev_values = {r: ws.cell(row=r, column=4).value for r in range(37, 50)}
+    prev_values = {r: _numval(ws, ws_data, r, 4) for r in range(37, 50)}
     ws.cell(row=36, column=3, value=prev_label)
     ws.cell(row=36, column=4, value=target_month)
     for r, v in prev_values.items():
@@ -514,10 +528,16 @@ def build_raw_data(prev_workbook_bytes, target_month, publish_lists, content_per
                     ad_rows, partnership):
     """전월 최종본(bytes) + 이번달 입력들을 받아 취합된 워크북(openpyxl Workbook)과
     ConfirmLog를 반환한다."""
+    import io
     import openpyxl
     from core.confirm import ConfirmLog
 
-    wb = openpyxl.load_workbook(prev_workbook_bytes)
+    raw_bytes = prev_workbook_bytes.read() if hasattr(prev_workbook_bytes, "read") else prev_workbook_bytes
+    wb = openpyxl.load_workbook(io.BytesIO(raw_bytes))
+    # 전월 최종본에는 다른 시트를 참조하는 수식이 많이 남아 있어(예: 운영요약의
+    # '=AD 데이터(전체)!F5'), openpyxl로는 계산된 값을 읽을 수 없다. data_only=True로
+    # 한 번 더 읽어 엑셀이 마지막 저장 시 캐시해 둔 계산값을 따로 확보해 둔다.
+    wb_data = openpyxl.load_workbook(io.BytesIO(raw_bytes), data_only=True)
     confirm = ConfirmLog()
 
     instagram_totals = append_instagram_block(
@@ -530,10 +550,10 @@ def build_raw_data(prev_workbook_bytes, target_month, publish_lists, content_per
     for ad_type in ("참여", "도달", "동영상조회"):
         ad_totals_by_type[ad_type] = append_ad_type_block(
             wb, ad_type, target_month, ad_rows, content_rows, confirm)
-    rounded_spend_by_type = append_ad_all_block(wb, target_month, ad_rows, content_rows, confirm)
+    rounded_spend_by_type = append_ad_all_block(wb, wb_data, target_month, ad_rows, content_rows, confirm)
 
     append_partnership_block(wb, target_month, partnership["인스타"], partnership["블로그"])
 
-    update_operations_summary(wb, target_month, instagram_totals, ad_totals_by_type, rounded_spend_by_type)
+    update_operations_summary(wb, wb_data, target_month, instagram_totals, ad_totals_by_type, rounded_spend_by_type)
 
-    return wb, confirm
+    return wb, wb_data, confirm

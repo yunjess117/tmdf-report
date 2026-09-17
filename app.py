@@ -16,6 +16,7 @@ from core.parsers.content_raw import parse_content_raw
 from core.parsers.ad_report import parse_ad_report
 from core.parsers.partnership_report import parse_partnership_report
 from core.raw_data import build_raw_data, detect_target_month
+from core.ppt_report import build_ppt
 
 st.set_page_config(page_title="청년상인 로우데이터 취합", layout="wide")
 st.title("청년상인 로우데이터 취합")
@@ -26,7 +27,7 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("전월 최종본")
     prev_raw = st.file_uploader("전월 로우데이터 엑셀", type=["xlsx"], key="prev_raw")
-    prev_ppt = st.file_uploader("전월 월간보고서 PPT (참고용, 현재 취합에는 사용하지 않음)",
+    prev_ppt = st.file_uploader("전월 월간보고서 PPT (선택 — 업로드하면 이번 달 PPT도 같이 만듭니다)",
                                  type=["pptx"], key="prev_ppt")
 with col2:
     st.subheader("이번 달 입력 데이터")
@@ -54,7 +55,7 @@ if st.button("취합 실행", disabled=not ready, type="primary"):
         publish_lists = parse_publish_list(publish_list_file, year_hint)
 
         prev_bytes = io.BytesIO(prev_raw.read())
-        prev_wb_probe = openpyxl.load_workbook(prev_bytes)
+        prev_wb_probe = openpyxl.load_workbook(prev_bytes, data_only=True)
         target_month = detect_target_month(prev_wb_probe)
         prev_bytes.seek(0)
 
@@ -64,8 +65,8 @@ if st.button("취합 실행", disabled=not ready, type="primary"):
         if partnership_file is not None:
             partnership = parse_partnership_report(partnership_file)
 
-        wb, confirm = build_raw_data(prev_bytes, target_month, publish_lists,
-                                      content_perf, ad_rows, partnership)
+        wb, wb_data, confirm = build_raw_data(prev_bytes, target_month, publish_lists,
+                                               content_perf, ad_rows, partnership)
 
         out = io.BytesIO()
         wb.save(out)
@@ -78,6 +79,19 @@ if st.button("취합 실행", disabled=not ready, type="primary"):
             file_name=f"청년상인_{target_month}_월간리포트_로우데이터.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
+        if prev_ppt is not None:
+            ppt_bytes = io.BytesIO(prev_ppt.read())
+            prs = build_ppt(ppt_bytes, wb, target_month, confirm, wb_data=wb_data)
+            ppt_out = io.BytesIO()
+            prs.save(ppt_out)
+            ppt_out.seek(0)
+            st.download_button(
+                "월간보고서 PPT 다운로드",
+                data=ppt_out,
+                file_name=f"청년상인_{target_month}_SNS_운영_월간보고서.pptx",
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            )
 
         if confirm.items:
             st.warning(f"'확인 필요' 항목 {len(confirm.items)}건 — 원본에 없거나 자동 매칭에 실패해 수기 확인이 필요합니다.")
