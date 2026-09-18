@@ -479,6 +479,49 @@ def append_partnership_block(wb, target_month, insta_rows, blog_rows):
 
 
 # ---------------------------------------------------------------------------
+# 인스타그램 팔로워 타깃(성별/연령) — 전월 최종본에 없던 신규 시트.
+# PPT의 '팔로워 성별/연령 비중' 차트가 이 시트 값을 읽어간다. 여기 값만 고치면
+# (수식이 아니라 일반 셀이라 수기 수정 가능) 다음에 PPT를 다시 만들 때 반영된다.
+# ---------------------------------------------------------------------------
+
+_TARGET_SHEET = "인스타그램 팔로워 타깃"
+
+
+def write_follower_target(wb, target_month, target: "FollowerTarget"):
+    if target is None or not target.age_labels:
+        return
+    if _TARGET_SHEET in wb.sheetnames:
+        ws = wb[_TARGET_SHEET]
+    else:
+        import copy
+        ws = wb.create_sheet(_TARGET_SHEET)
+        ws.cell(row=2, column=2, value="인스타그램 팔로워 타깃(성별/연령)")
+        ws.cell(row=2, column=2).font = copy.copy(wb["인스타그램"]["B2"].font)
+
+    ws.cell(row=4, column=2, value="기준월")
+    ws.cell(row=4, column=3, value=target_month)
+    ws.cell(row=4, column=4, value="* 인스타그램 타깃(인사이트) CSV 기준. 필요하면 이 시트 값을 직접 고쳐도 됩니다.")
+
+    ws.cell(row=6, column=2, value="성별 비중(%)")
+    ws.cell(row=7, column=2, value="구분")
+    ws.cell(row=7, column=3, value="남성")
+    ws.cell(row=7, column=4, value="여성")
+    ws.cell(row=8, column=2, value="비율")
+    ws.cell(row=8, column=3, value=round(target.male_total, 1))
+    ws.cell(row=8, column=4, value=round(target.female_total, 1))
+
+    ws.cell(row=10, column=2, value="연령대별 성별 비중(%)")
+    ws.cell(row=11, column=2, value="연령대")
+    ws.cell(row=11, column=3, value="남성")
+    ws.cell(row=11, column=4, value="여성")
+    for i, age in enumerate(target.age_labels):
+        r = 12 + i
+        ws.cell(row=r, column=2, value=age)
+        ws.cell(row=r, column=3, value=target.male_by_age[i])
+        ws.cell(row=r, column=4, value=target.female_by_age[i])
+
+
+# ---------------------------------------------------------------------------
 # 운영요약 시트 — 이번 달 열만 채운다(다른 열/누적/달성률은 이미 살아있는 수식이라 건드리지 않음)
 # ---------------------------------------------------------------------------
 
@@ -545,23 +588,48 @@ def update_operations_summary(wb, target_month, ad_totals_by_type):
 # 최상위 취합 함수
 # ---------------------------------------------------------------------------
 
-def detect_target_month(wb, first_row=6, first_month=7):
-    """전월 최종본의 인스타그램 시트 요약 표에서 마지막으로 채워진 달의 다음 달을 찾는다."""
+def _last_filled_month_num(wb, first_row=6, first_month=7):
+    """방금 openpyxl로 새로 저장해 실제 엑셀로 한 번도 열어보지 않은 파일은
+    새로 써넣은 수식 셀이 data_only 스냅샷에서 캐시값 없이 None으로 읽힌다.
+    그래서 '숫자인지'가 아니라 '비어있지 않은지'로 채워졌는지를 판단한다 —
+    라이브 워크북에서는 수식 문자열이, data_only 스냅샷에서는 캐시된 숫자가
+    잡히므로 두 경우 모두 이 기준으로 정상 동작한다."""
     ws = wb["인스타그램"]
     last_filled = None
     for i in range(6):
         r = first_row + i
-        if isinstance(ws.cell(row=r, column=4).value, (int, float)):
+        v = ws.cell(row=r, column=4).value
+        if v is not None and v != "":
             last_filled = first_month + i
+    return last_filled
+
+
+def detect_target_month(wb, first_row=6, first_month=7):
+    """전월 최종본의 인스타그램 시트 요약 표에서 마지막으로 채워진 달의 다음 달을 찾는다.
+    (로우데이터를 '새로' 만들 때 이번 달이 몇 월인지 판단하는 용도)"""
+    last_filled = _last_filled_month_num(wb, first_row, first_month)
     if last_filled is None:
         raise ValueError("전월 최종본에서 채워진 월을 찾지 못했습니다.")
     return f"{last_filled + 1}월"
 
 
-def build_raw_data(prev_workbook_bytes, target_month, publish_lists, content_perf,
-                    ad_rows, partnership):
+def detect_latest_filled_month(wb, first_row=6, first_month=7):
+    """이미 완성된('최종') 로우데이터 파일에서 마지막으로 채워진 달 자체를 찾는다.
+    (PPT를 독립적으로 만들 때, 그 파일이 어느 달 몫인지 판단하는 용도)
+    라이브 워크북(data_only=False로 읽은 wb)을 넘겨야 한다 — 실제 엑셀로 열어
+    저장하지 않은 파일은 수식 셀의 캐시값이 없어 data_only 스냅샷에서 비어보인다."""
+    last_filled = _last_filled_month_num(wb, first_row, first_month)
+    if last_filled is None:
+        raise ValueError("로우데이터에서 채워진 월을 찾지 못했습니다.")
+    return f"{last_filled}월"
+
+
+def build_raw_data(prev_workbook_bytes, target_month, publish_lists, content_perf, ad_rows):
     """전월 최종본(bytes) + 이번달 입력들을 받아 취합된 워크북(openpyxl Workbook)과
-    ConfirmLog, PPT용 파이썬 계산값 캐시(block_cache)를 반환한다."""
+    ConfirmLog, PPT용 파이썬 계산값 캐시(block_cache)를 반환한다.
+
+    제휴(인플루언서 체험단) 데이터는 이 함수에서 다루지 않는다 — PPT 만들기 단계에서
+    '최종 로우데이터'에 append_partnership_block()을 별도로 호출해 채운다."""
     import io
     import openpyxl
     from core.confirm import ConfirmLog
@@ -584,8 +652,6 @@ def build_raw_data(prev_workbook_bytes, target_month, publish_lists, content_per
         ad_totals_by_type[ad_type] = totals
         block_cache[_AD_SHEETS[ad_type]["sheet"]] = cache
     append_ad_all_block(wb, target_month, ad_rows, content_rows, confirm)
-
-    append_partnership_block(wb, target_month, partnership["인스타"], partnership["블로그"])
 
     update_operations_summary(wb, target_month, ad_totals_by_type)
 

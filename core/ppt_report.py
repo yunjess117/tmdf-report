@@ -15,6 +15,7 @@ data_only=True로 한 번 더 읽은 스냅샷(wb_data, 엑셀이 마지막 저�
 """
 import datetime as dt
 from pptx import Presentation
+from pptx.chart.data import CategoryChartData
 
 from core.ppt_table import (
     set_row_count, set_cell_text, set_cell_hyperlink, set_run_color,
@@ -74,6 +75,57 @@ def _numval(ws_live, ws_data, row, col):
     return None
 
 
+def _anyval(ws_live, ws_data, row, col):
+    """숫자뿐 아니라 문자열도 대상인 셀(제목/라벨 등)까지 포괄하는 버전.
+    실행 중(수식이 아직 계산 안 된) 셀은 살아있는 값을, 재업로드된(엑셀에서 한 번
+    열어 저장된) 파일의 수식 셀은 data_only 캐시값을 우선한다."""
+    v = ws_live.cell(row=row, column=col).value
+    if isinstance(v, str) and v.startswith("="):
+        if ws_data is not None:
+            v2 = ws_data.cell(row=row, column=col).value
+            return v2
+        return None
+    return v
+
+
+def _detect_topic_col(ws, header_row, default=5, search_rows=40):
+    for r in range(header_row + 1, header_row + 1 + search_rows):
+        for c in range(2, 12):
+            if ws.cell(row=r, column=c).value in ("평균", "합계"):
+                return c
+    return default
+
+
+def _last_block_rows_fallback(ws, ws_data, max_col):
+    """block_cache에 이번 달 몫이 없을 때(=세션이 다른 독립 업로드 파일에서 PPT를
+    만들 때) 시트에서 직접 마지막 블록(데이터+평균+합계)을 읽어온다. 수식 셀은
+    data_only 스냅샷 값으로 대체한다."""
+    header_row = None
+    for r in range(1, 20):
+        if ws.cell(row=r, column=2).value == "NO.":
+            header_row = r
+            break
+    if header_row is None:
+        return [], None, None
+    topic_col = _detect_topic_col(ws, header_row)
+    totals = [r for r in range(header_row + 1, ws.max_row + 1)
+              if ws.cell(row=r, column=topic_col).value == "합계"]
+    if not totals:
+        return [], None, None
+    total_row = totals[-1]
+    avg_row = total_row - 1
+    prev_total = totals[-2] if len(totals) >= 2 else header_row
+    data_start = prev_total + 1
+
+    def read_row(r):
+        return [_anyval(ws, ws_data, r, c) for c in range(2, max_col + 1)]
+
+    rows = [read_row(r) for r in range(data_start, avg_row)]
+    avgs = read_row(avg_row)
+    tot = read_row(total_row)
+    return rows, avgs, tot
+
+
 class XlsxSource:
     """방금 build_raw_data로 만든 워크북 + block_cache(파이썬 계산값)에서
     PPT에 필요한 값을 뽑아주는 헬퍼."""
@@ -87,13 +139,18 @@ class XlsxSource:
         self.month_num = month_to_int(target_month)
 
     def _cumulative(self, sheet_for_history, row, col_base, first_month, current_value):
-        """월별 '열'에 값이 쌓이는 표(운영요약의 KPI/광고비 표)에서, 이번 달보다
-        이전 달들은 data_only 스냅샷으로, 이번 달은 방금 계산한 파이썬 값으로
-        더해 진짜 누적값을 만든다."""
+        """월별 '열'에 값이 쌓이는 표(운영요약의 KPI/광고비 표)에서 누적값을 만든다.
+
+        current_value가 있으면(이번 세션에서 방금 계산한 값) 이전 달은 data_only
+        스냅샷으로 채우고 이번 달은 그 값을 더한다. current_value가 없으면(=block_cache
+        없이 독립적으로 업로드된 '최종 로우데이터'로 PPT를 만드는 경우) 이번 달 몫까지
+        포함해 전부 data_only 스냅샷에서 읽는다(엑셀에서 한 번 열어 저장된 파일이라
+        이번 달 수식도 계산값이 캐시돼 있다고 가정)."""
         ws = self.wb[sheet_for_history]
         ws_data = self.wb_data[sheet_for_history] if self.wb_data else None
+        last_month = (self.month_num - 1) if isinstance(current_value, (int, float)) else self.month_num
         total = 0
-        for m in range(first_month, self.month_num):
+        for m in range(first_month, last_month + 1):
             c = col_base + (m - first_month)
             v = _numval(ws, ws_data, row, c)
             if v:
@@ -105,6 +162,10 @@ class XlsxSource:
     # -- 운영요약 KPI --------------------------------------------------
     def kpi_row(self, metric_row, current_value):
         ws = self.wb["운영요약"]
+        ws_data = self.wb_data["운영요약"] if self.wb_data else None
+        if current_value is None:
+            month_col = 3 + (self.month_num - 7)
+            current_value = _numval(ws, ws_data, metric_row, month_col)
         cum = self._cumulative("운영요약", metric_row, 3, 7, current_value)
         target = ws.cell(row=metric_row, column=10).value  # J열: 고정 목표치(항상 리터럴)
         rate = (cum / target) if isinstance(target, (int, float)) and target else None
@@ -113,25 +174,34 @@ class XlsxSource:
     # -- 채널(인스타/블로그) 월 요약 -----------------------------------
     def channel_summary(self, sheet, prev_month_num, cur_values):
         """인스타그램/블로그 시트의 월별 요약(행6~11)에서 전월 값은 data_only
-        스냅샷으로 읽고, 당월 값은 이번 실행에서 계산한 파이썬 값을 그대로 쓴다.
-        cur_values: {"발행수":.., "지표2":.., "지표3":.., "지표4":..} (없는 키는 None)"""
+        스냅샷으로 읽고, 당월 값은 이번 실행에서 계산한 파이썬 값을 우선 쓴다.
+        cur_values에 없는(None) 항목은 당월 열도 data_only 스냅샷에서 읽는다
+        (block_cache 없이 독립 업로드된 파일로 PPT를 만드는 경우)."""
         ws = self.wb[sheet]
         ws_data = self.wb_data[sheet] if self.wb_data else None
         cols = {"발행수": 4, "지표2": 5, "지표3": 6, "지표4": 7}
         prev_row = 6 + (prev_month_num - 7)
+        cur_row = 6 + (self.month_num - 7)
         out = {}
         for name, c in cols.items():
             prev_v = _numval(ws, ws_data, prev_row, c)
-            out[name] = (prev_v, cur_values.get(name))
+            cur_v = cur_values.get(name)
+            if cur_v is None:
+                cur_v = _numval(ws, ws_data, cur_row, c)
+            out[name] = (prev_v, cur_v)
         return out
 
     # -- 콘텐츠 발행 내역(인스타/블로그 공통), AD 데이터 참여/도달/동영상조회 공통 --
-    def block_rows(self, sheet):
-        """block_cache에 저장해 둔 이번 달 (데이터 행, 평균 행, 합계 행)을 그대로 준다."""
+    def block_rows(self, sheet, max_col=17):
+        """block_cache에 저장해 둔 이번 달 (데이터 행, 평균 행, 합계 행)을 준다.
+        block_cache에 없으면(독립 업로드된 파일로 PPT를 만드는 경우) 시트에서 직접
+        마지막 블록을 읽어온다(수식 셀은 data_only 스냅샷 값으로 대체)."""
         entry = self.block_cache.get(sheet)
-        if not entry:
-            return [], None, None
-        return entry["rows"], entry["avg"], entry["total"]
+        if entry:
+            return entry["rows"], entry["avg"], entry["total"]
+        ws = self.wb[sheet]
+        ws_data = self.wb_data[sheet] if self.wb_data else None
+        return _last_block_rows_fallback(ws, ws_data, max_col)
 
     # -- AD 지출 누적/예산 ------------------------------------------------
     def ad_cumulative_spend(self, ad_type, row):
@@ -335,11 +405,11 @@ def fill_channel_compare_table(table, sheet, src: XlsxSource, confirm):
         set_cell_text(table.rows[r].cells[1], prev_display)
 
         metric = _CHANNEL_ROW_SOURCE.get(label)
-        if metric is None or cur_values.get(metric) is None:
+        cur_v = summary.get(metric, (None, None))[1] if metric else None
+        if metric is None or cur_v is None:
             set_cell_text(table.rows[r].cells[2], CONFIRM_NEEDED)
             confirm.add("PPT/채널요약", f"{sheet} - {label}", "자동 산출 소스가 없어 확인 필요")
         else:
-            prev_v, cur_v = summary[metric]
             set_cell_text(table.rows[r].cells[2], _fmt_num(cur_v))
 
         prev_num = _parse_num(prev_display)
@@ -375,10 +445,50 @@ def fill_budget_summary_table(table, src: XlsxSource):
 
 
 # ---------------------------------------------------------------------------
+# 인스타그램 팔로워 성별/연령 비중 (네이티브 차트) 채움
+# ---------------------------------------------------------------------------
+
+def fill_gender_age_charts(prs, target, confirm):
+    """슬라이드의 파이차트(카테고리=['남성','여성'])와 막대차트(연령대별 남/녀)를
+    찾아 target(FollowerTarget)의 값으로 갱신한다. chart.replace_data()를 써서
+    캐시된 값뿐 아니라 차트에 내장된 데이터 시트도 같이 갱신되므로, PowerPoint에서
+    '데이터 편집'으로 열었을 때도 정상적으로 수기 수정이 가능하다."""
+    if target is None or not target.age_labels:
+        return
+    filled = []
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if not shape.has_chart:
+                continue
+            chart = shape.chart
+            try:
+                cats = list(chart.plots[0].categories)
+            except Exception:
+                continue
+            if cats == ["남성", "여성"]:
+                cd = CategoryChartData()
+                cd.categories = cats
+                cd.add_series("성별", (target.male_total / 100, target.female_total / 100))
+                chart.replace_data(cd)
+                filled.append("성별 파이차트")
+            elif len(cats) == len(target.age_labels) and len(chart.plots[0].series) == 2:
+                cd = CategoryChartData()
+                cd.categories = cats  # 템플릿 라벨(예: '24세 이하') 그대로 유지
+                cd.add_series("남", [v / 100 for v in target.male_by_age])
+                cd.add_series("녀", [v / 100 for v in target.female_by_age])
+                chart.replace_data(cd)
+                filled.append("연령대별 성별 막대차트")
+    if not filled:
+        confirm.add("PPT/팔로워 비중", "성별·연령 차트",
+                    "전월 PPT에서 성별/연령 차트를 찾지 못해 채우지 못함(템플릿 구성 확인 필요)")
+
+
+# ---------------------------------------------------------------------------
 # 최상위: PPT 조합
 # ---------------------------------------------------------------------------
 
-def build_ppt(prev_ppt_file, wb, target_month, confirm, block_cache=None, wb_data=None):
+def build_ppt(prev_ppt_file, wb, target_month, confirm, block_cache=None, wb_data=None,
+              follower_target=None):
     prs = Presentation(prev_ppt_file)
     src = XlsxSource(wb, target_month, block_cache, wb_data=wb_data)
 
@@ -402,26 +512,30 @@ def build_ppt(prev_ppt_file, wb, target_month, confirm, block_cache=None, wb_dat
                 elif kind == "budget_summary":
                     fill_budget_summary_table(table, src)
                 elif kind == "content_instagram":
-                    rows, avgs, totals = src.block_rows("인스타그램")
+                    rows, avgs, totals = src.block_rows("인스타그램", max_col=17)
                     fill_data_table(table, INSTAGRAM_CONTENT_SPEC, rows, avgs, totals,
                                      url_idx=CONTENT_URL_IDX, url_ppt_col=2)
                 elif kind == "content_blog":
-                    rows, avgs, totals = src.block_rows("블로그")
+                    rows, avgs, totals = src.block_rows("블로그", max_col=11)
                     fill_data_table(table, BLOG_CONTENT_SPEC, rows, avgs, totals,
                                      url_idx=CONTENT_URL_IDX, url_ppt_col=2)
                 elif kind == "ad_participation":
-                    rows, avgs, totals = src.block_rows("AD 데이터 (참여)")
+                    rows, avgs, totals = src.block_rows("AD 데이터 (참여)", max_col=15)
                     fill_data_table(table, AD_PARTICIPATION_SPEC, rows, avgs, totals)
                 elif kind == "ad_reach":
-                    rows, avgs, totals = src.block_rows("AD 데이터 (도달)")
+                    rows, avgs, totals = src.block_rows("AD 데이터 (도달)", max_col=15)
                     fill_data_table(table, AD_REACH_SPEC, rows, avgs, totals)
                 elif kind == "ad_video":
-                    rows, avgs, totals = src.block_rows("AD 데이터 (동영상조회)")
+                    rows, avgs, totals = src.block_rows("AD 데이터 (동영상조회)", max_col=16)
                     fill_data_table(table, AD_VIDEO_SPEC, rows, avgs, totals)
             except Exception as e:
                 confirm.add("PPT", kind, f"자동 채움 실패({e}) - 수기 확인 필요")
 
+    if follower_target is not None:
+        fill_gender_age_charts(prs, follower_target, confirm)
+
     confirm.add("PPT", "자동화 범위 안내",
-                "운영 캘린더·팔로워 추이/성별연령·우수 콘텐츠 TOP3·검색 상위 노출·이벤트/제휴 소개 슬라이드는 "
-                "스크린샷·서술형 데이터라 자동 채움 대상이 아닙니다(전월 내용이 그대로 남아있으니 직접 교체 필요).")
+                "운영 캘린더·팔로워 추이(일별/월별 그래프)·우수 콘텐츠 TOP3·검색 상위 노출·"
+                "이벤트/제휴 소개 슬라이드는 스크린샷·서술형 데이터라 자동 채움 대상이 아닙니다"
+                "(전월 내용이 그대로 남아있으니 직접 교체 필요).")
     return prs
