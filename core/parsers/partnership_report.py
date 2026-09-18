@@ -22,6 +22,7 @@ class InstaPartnerRow:
     likes: int
     comments: int
     note: str
+    url: str = None
 
 
 @dataclass
@@ -35,6 +36,7 @@ class BlogPartnerRow:
     comments: int
     likes: int
     note: str
+    url: str = None
 
 
 def _to_date(v):
@@ -51,6 +53,13 @@ def _find_header_row(ws, must_contain: str, search_rows=20):
         if must_contain in values:
             return r, {v: c for c, v in enumerate(values, start=1) if v}
     return None, {}
+
+
+def _get_url(ws, row, col):
+    if not col:
+        return None
+    cell = ws.cell(row=row, column=col)
+    return cell.hyperlink.target if cell.hyperlink else None
 
 
 def parse_partnership_report(file_like) -> dict:
@@ -80,6 +89,7 @@ def parse_partnership_report(file_like) -> dict:
                     likes=get(r, "좋아요 수"),
                     comments=get(r, "댓글 수"),
                     note=str(get(r, "비고") or "").strip(),
+                    url=_get_url(ws, r, header.get("URL")),
                 ))
 
     if "블로그 집행 보고서" in wb.sheetnames:
@@ -105,6 +115,7 @@ def parse_partnership_report(file_like) -> dict:
                     comments=get(r, "댓글 수"),
                     likes=get(r, "공감 수"),
                     note=str(get(r, "비고") or "").strip(),
+                    url=_get_url(ws, r, header.get("URL")),
                 ))
 
     return {"인스타": insta_rows, "블로그": blog_rows}

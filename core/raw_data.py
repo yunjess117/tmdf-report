@@ -417,8 +417,8 @@ def append_ad_all_block(wb, target_month, ad_rows, content_rows, confirm):
 # 제휴(인플루언서 체험단) 오픈 보고서 -> 신규 '제휴' 시트
 # ---------------------------------------------------------------------------
 
-_PARTNER_INSTA_HEADER = ["NO.", "오픈일", "인스타 아이디", "팔로워 수", "조회 수", "좋아요 수", "댓글 수", "비고"]
-_PARTNER_BLOG_HEADER = ["NO.", "오픈일", "블로거", "제목", "일평균 방문자수", "오픈일 방문자수", "PV수치", "댓글 수", "공감 수", "비고"]
+_PARTNER_INSTA_HEADER = ["NO.", "오픈일", "인스타 아이디", "내용 요약", "팔로워 수", "조회 수", "좋아요 수", "댓글 수", "비고", "URL"]
+_PARTNER_BLOG_HEADER = ["NO.", "오픈일", "블로거", "제목", "일평균 방문자수", "오픈일 방문자수", "PV수치", "댓글 수", "공감 수", "비고", "URL"]
 
 
 def _ensure_partnership_sheet(wb):
@@ -443,11 +443,11 @@ def append_partnership_block(wb, target_month, insta_rows, blog_rows):
     insert_at = last_total + 1 if last_total != 5 else 6
     for i, p in enumerate(insta_rows):
         r = insert_at + i
-        write_row(ws, r, 2, [i + 1, p.open_date, p.handle, p.followers, p.views,
-                              p.likes, p.comments, p.note])
+        write_row(ws, r, 2, [i + 1, p.open_date, p.handle, p.summary, p.followers, p.views,
+                              p.likes, p.comments, p.note, p.url])
     total_row = insert_at + len(insta_rows)
     ws.cell(row=total_row, column=3, value="합계")
-    for c, field in ((5, "followers"), (6, "views"), (7, "likes"), (8, "comments")):
+    for c, field in ((6, "followers"), (7, "views"), (8, "likes"), (9, "comments")):
         vals = [getattr(p, field) for p in insta_rows if isinstance(getattr(p, field), (int, float))]
         ws.cell(row=total_row, column=c, value=_sum(vals))
 
@@ -469,7 +469,7 @@ def append_partnership_block(wb, target_month, insta_rows, blog_rows):
     for i, p in enumerate(blog_rows):
         r = blog_insert_at + i
         write_row(ws, r, 2, [i + 1, p.open_date, p.blogger, p.title, p.daily_visitors,
-                              p.open_day_visitors, p.pv, p.comments, p.likes, p.note])
+                              p.open_day_visitors, p.pv, p.comments, p.likes, p.note, p.url])
     blog_total_row = blog_insert_at + len(blog_rows)
     ws.cell(row=blog_total_row, column=3, value="합계")
     for c, field in ((5, "daily_visitors"), (6, "open_day_visitors"), (7, "pv"),
