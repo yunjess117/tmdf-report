@@ -439,8 +439,31 @@ def append_partnership_block(wb, target_month, insta_rows, blog_rows):
     # '기존 수식을 보존'할 대상이 없다 - 취합 시점의 값을 그대로 적는다.
     ws = _ensure_partnership_sheet(wb)
 
-    last_total = find_last_label_row(ws, "합계", 3, search_from=5, search_to=200) or 5
+    # '제휴' 시트가 이미 인스타+블로그 섹션을 갖고 있는 상태(= PPT 패널에서 만든
+    # 결과물을 '최종 로우데이터'로 다시 올려 재생성하는 경우)에서, 인스타 합계를
+    # 찾는 범위를 시트 전체로 잡으면 블로그 섹션의 마지막 합계까지 걸려서 이번
+    # 달 인스타 데이터가 블로그 섹션 '뒤'에 붙어버린다(인스타-블로그-인스타-블로그
+    # 순으로 어긋남). 그러면 이후 읽을 때 '마지막 인스타 블록'을 블로그 섹션
+    # 앞의 예전 블록으로 잘못 집어 PPT에 지난달 데이터가 그대로 남는 문제로
+    # 이어진다 - 블로그 섹션 시작 전까지로 검색 범위를 제한한다.
+    blog_marker_row = None
+    for r in range(6, ws.max_row + 3):
+        if ws.cell(row=r, column=2).value == "블로그":
+            blog_marker_row = r
+            break
+
+    insta_search_to = (blog_marker_row - 1) if blog_marker_row else 200
+    last_total = find_last_label_row(ws, "합계", 3, search_from=5, search_to=insta_search_to) or 5
     insert_at = last_total + 1 if last_total != 5 else 6
+
+    n_new_insta_rows = len(insta_rows) + 1  # 데이터 행 + 합계 행
+    if blog_marker_row is not None and insert_at <= blog_marker_row:
+        # 블로그 섹션이 이미 인스타 섹션 바로 뒤에 있으면, 새 인스타 행이 들어갈
+        # 자리를 진짜로 밀어서 만든다(그냥 다음 빈 줄에 쓰면 인스타/블로그
+        # 섹션이 뒤섞인다).
+        ws.insert_rows(insert_at, n_new_insta_rows)
+        blog_marker_row += n_new_insta_rows
+
     for i, p in enumerate(insta_rows):
         r = insert_at + i
         write_row(ws, r, 2, [i + 1, p.open_date, p.handle, p.summary, p.followers, p.views,
@@ -451,11 +474,7 @@ def append_partnership_block(wb, target_month, insta_rows, blog_rows):
         vals = [getattr(p, field) for p in insta_rows if isinstance(getattr(p, field), (int, float))]
         ws.cell(row=total_row, column=c, value=_sum(vals))
 
-    blog_header_row = None
-    for r in range(total_row + 1, ws.max_row + 3):
-        if ws.cell(row=r, column=2).value == "블로그":
-            blog_header_row = r + 1
-            break
+    blog_header_row = (blog_marker_row + 1) if blog_marker_row is not None else None
     if blog_header_row is None:
         ws.cell(row=total_row + 2, column=2, value="블로그")
         blog_header_row = total_row + 3
