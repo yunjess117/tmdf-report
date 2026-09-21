@@ -291,14 +291,13 @@ with col_raw, st.container(border=True, key="panel_raw"):
 # =============================================================================
 with col_ppt, st.container(border=True, key="panel_ppt"):
     st.markdown(f'<div class="sheet-title" style="color:{COLORS["purple"]};">월간보고서 PPT</div>', unsafe_allow_html=True)
-    st.caption("로우데이터는 여기서 별도로 업로드합니다 — 로우데이터를 만든 뒤 팔로워/블로그 등 확인 필요 "
-               "항목을 엑셀에서 직접 채우고 그 파일을 올려주세요.")
+    st.caption("확인 필요 항목을 채운 로우데이터 최종본을 올려주세요.")
 
     section_header(1, "입력 파일", "전월 PPT 템플릿과 이번 달 최종 로우데이터를 업로드하세요. ★는 필수입니다.", "purple")
     cp1, cp2 = st.columns(2)
     with cp1, st.container(border=True):
         card_top("purple", "전월 월간보고서", "이번 달 PPT를 만들 때 템플릿으로 씁니다.")
-        prev_ppt = st.file_uploader("전월 월간보고서 PPT (선택)", type=["pptx"], key="prev_ppt")
+        prev_ppt = st.file_uploader("★ 전월 월간보고서 PPT", type=["pptx"], key="prev_ppt")
     with cp2, st.container(border=True):
         card_top("purple", "이번 달 로우데이터(최종)")
         final_raw_file = st.file_uploader("★ 최종 로우데이터(취합) 엑셀", type=["xlsx"], key="final_raw")
