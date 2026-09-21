@@ -120,7 +120,11 @@ def _read_follower_monthly(wb, wb_data):
 
 def _read_follower_daily(wb, wb_data, month_label):
     """일별 표(17행~)에서 해당 월(구분열=month_label) 행만 뽑는다.
-    반환: [{'date':.., 'insta':.., 'blog_views':.., 'blog_visits':..}, ...]"""
+    반환: [{'date':.., 'insta':.., 'insta_delta':.., 'blog_views':.., 'blog_visits':..}, ...]
+    insta_delta는 시트에 이미 있는 '증감' 열을 그대로 읽는다(전월 마지막 날
+    기준 등 사람이 계산한 값을 그대로 살려쓰기 위해 - 목록 안에서 앞뒤 값을
+    다시 빼서 계산하면 이번 달 첫날처럼 전월 값과 비교해야 하는 날짜의 증감이
+    항상 빈 값이 되어버린다)."""
     if _FOLLOWER_SHEET not in wb.sheetnames:
         return []
     ws = wb[_FOLLOWER_SHEET]
@@ -135,6 +139,7 @@ def _read_follower_daily(wb, wb_data, month_label):
         out.append({
             "date": date_v,
             "insta": _numval(ws, ws_data, r, 4),
+            "insta_delta": _numval(ws, ws_data, r, 5),
             "blog_views": _numval(ws, ws_data, r, 7),
             "blog_visits": _numval(ws, ws_data, r, 9),
         })
@@ -1034,7 +1039,16 @@ def fill_follower_trend_charts(prs, wb, wb_data, target_month, confirm):
                 all_series_names = [s.name for s in chart.series]
                 delta_name = next((n for n in all_series_names if n != bar_name), None)
                 if delta_name:
-                    deltas = [None] + [values[i] - values[i - 1] for i in range(1, len(values))]
+                    # '채널 팔로워' 시트에 이미 있는 증감 값을 그대로 쓴다(전월 마지막
+                    # 날 대비 등 사람이 계산해둔 값을 그대로 살려쓰기 위해 - 목록 안
+                    # 앞뒤 값을 다시 빼서 계산하면 이번 달 첫날의 증감이 항상 빈
+                    # 값이 되어버린다). 혹시 비어 있는 날짜만 인접 값 차이로 보충.
+                    deltas = []
+                    for i, d in enumerate(daily):
+                        v = d.get("insta_delta")
+                        if v is None and i > 0 and values[i] is not None and values[i - 1] is not None:
+                            v = values[i] - values[i - 1]
+                        deltas.append(v)
                     _rewrite_series_by_name(chart, delta_name, labels, deltas)
                     # 증감 부호에 따라 빨간 세모(▲, 증가)/파란 세모(▼, 감소)로 표시.
                     _set_series_number_format(
@@ -1071,6 +1085,28 @@ def _force_percent_format(chart, series_names):
         pass
 
 
+_GENDER_COLOR = {"남": "72C9C7", "여": "72C9C7", "녀": "E58BB0", "남성": "72C9C7", "여성": "E58BB0"}
+
+
+def _fix_gender_series_colors(chart, series_names):
+    """전월 PPT 템플릿에서 성별 파이차트(남성=청록/여성=핑크)와 연령대별 막대차트
+    (남/녀)가 서로 반대 색 규칙을 쓰고 있던 것을 발견해(파이차트 기준으로) 통일한다."""
+    for ser in chart._chartSpace.plotArea.sers:
+        tx = ser.find(f"{_C_NS}tx")
+        v = tx.find(f".//{_C_NS}v") if tx is not None else None
+        name = v.text if v is not None else None
+        color = _GENDER_COLOR.get(name)
+        if color is None:
+            continue
+        spPr = ser.find(f"{_C_NS}spPr")
+        if spPr is None:
+            continue
+        a_ns = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+        srgbClr = spPr.find(f".//{a_ns}srgbClr")
+        if srgbClr is not None:
+            srgbClr.set("val", color)
+
+
 def fill_gender_age_charts(prs, target, confirm):
     """슬라이드의 파이차트(카테고리=['남성','여성'])와 막대차트(연령대별 남/녀)를
     찾아 target(FollowerTarget)의 값으로 갱신한다. chart.replace_data()를 써서
@@ -1102,6 +1138,7 @@ def fill_gender_age_charts(prs, target, confirm):
                 cd.add_series("녀", [v / 100 for v in target.female_by_age])
                 chart.replace_data(cd)
                 _force_percent_format(chart, ["남", "녀"])
+                _fix_gender_series_colors(chart, ["남", "녀"])
                 filled.append("연령대별 성별 막대차트")
     if not filled:
         confirm.add("PPT/팔로워 비중", "성별·연령 차트",
