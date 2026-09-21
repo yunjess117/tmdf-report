@@ -184,6 +184,18 @@ SUMIF/SUMIFS 전부 사람이 만든 8월 취합본과 일치).
 
 ### 검증 중 잡은 버그(참고용)
 
+- **(실사용 리포트에서 발견) '일간 팔로워 수' 차트를 채우면 PowerPoint가 파일을 열 때
+  '읽을 수 없는 내용을 제거했습니다'라며 팔로워/타깃 관련 차트가 통째로 사라짐.**
+  원인은 이 차트가 막대(팔로워 수)+선(전일 대비 증감)으로 된 콤보 차트인데,
+  python-pptx의 `chart.replace_data()`가 series 개수를 새로 넣는 데이터(1개 series)에
+  맞추려고 하면서 두 번째 plot(증감 선)을 통째로 삭제해버렸기 때문. 결과 파일은
+  XML 문법상 well-formed라 openpyxl 등 일반 파서로는 못 잡아내고, PowerPoint COM
+  자동화(`New-Object -ComObject PowerPoint.Application`)로 직접 열어봐야 재현됐다.
+  같은 데이터를 넣어도, 표를 먼저 제거해도 항상 깨져서 원인을 좁혀가다가 이 콤보
+  차트 구조를 발견. python-pptx 내부의 `_CategorySeriesXmlWriter`를 그대로 재사용해
+  series 개수는 건드리지 않고 이름이 일치하는 series 하나의 cat/val만 다시 쓰는
+  방식(`_rewrite_series_by_name`)으로 교체해 해결. 증감 선 series도 전일 대비 값을
+  다시 계산해 함께 채우도록 했다. 수정 후 PowerPoint COM으로 정상 오픈 확인.
 - 전월 최종본의 여러 셀이 `=SUM(...)` 같은 수식이라 openpyxl로는 계산값을 못 읽음 →
   같은 파일을 `data_only=True`로 한 번 더 읽어 캐시된 계산값을 보조로 사용하도록 수정.
 - 광고 소재명(`YYMMDD_제목`)의 날짜는 광고를 만든 날짜라 콘텐츠 발행일보다 1~2일 늦을 수

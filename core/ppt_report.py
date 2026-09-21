@@ -17,6 +17,7 @@ import datetime as dt
 import re
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
+from pptx.chart.xmlwriter import _CategorySeriesXmlWriter
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
 from core.ppt_table import (
@@ -850,6 +851,34 @@ _DATE_CAT_RE = re.compile(r"^\d+/\d+\(")
 _YEAR_MONTH_CAT_RE = re.compile(r"^\d+년\s*\d+월$")
 
 
+def _rewrite_series_by_name(chart, series_name, labels, values):
+    """콤보 차트(막대+선처럼 plot이 여러 개인 차트)에서는 chart.replace_data()를
+    쓰면 python-pptx가 series 개수를 새 데이터에 맞추려다 다른 plot(예: '일간
+    팔로워 수'의 막대 옆 증감 추세선)을 통째로 삭제해버린다. 이러면 파일 자체는
+    well-formed XML이라 openpyxl/일반 파서로는 못 잡아내지만, PowerPoint에서
+    열면 '읽을 수 없는 내용을 제거했습니다'라며 그 차트가 통째로 사라진다(실제
+    사용자 리포트로 확인, PowerPoint COM 자동화로 재현·격리해 원인을 특정함).
+    series 개수·다른 plot은 전혀 건드리지 않고, 이름이 일치하는 series 하나의
+    cat/val만 python-pptx 내부 로직을 그대로 재사용해 다시 쓴다."""
+    chartSpace = chart._chartSpace
+    all_sers = chartSpace.plotArea.sers
+    for i, series in enumerate(chart.series):
+        if series.name != series_name:
+            continue
+        ser = all_sers[i]
+        cd = CategoryChartData()
+        cd.categories = labels
+        cd.add_series(series_name, values)
+        series_data = cd[0]
+        ser._remove_cat()
+        ser._remove_val()
+        xml_writer = _CategorySeriesXmlWriter(series_data, chartSpace.date_1904)
+        ser._insert_cat(xml_writer.cat)
+        ser._insert_val(xml_writer.val)
+        return True
+    return False
+
+
 def _monthly_values(monthly, month_num, key):
     """month_num-2..month_num 3개월 값. 개별 월이 비어 있으면(None) 0으로 채워
     chart.replace_data()에 None이 들어가 차트가 깨지는 것을 막는다."""
@@ -919,10 +948,21 @@ def fill_follower_trend_charts(prs, wb, wb_data, target_month, confirm):
                     continue
                 labels = [_fmt_date_md(d["date"]) for d in daily]
                 values = [d["insta"] for d in daily]
-                cd = CategoryChartData()
-                cd.categories = labels
-                cd.add_series(series_names[0], values)
-                chart.replace_data(cd)
+                bar_name = series_names[0] if series_names else "팔로워 수"
+                # 이 차트는 막대(팔로워 수)+선(전일 대비 증감) 콤보 차트라
+                # chart.replace_data()를 쓰면 선 그래프 plot이 통째로 사라지며
+                # PowerPoint에서 파일이 손상된다 - _rewrite_series_by_name으로
+                # series별 cat/val만 안전하게 다시 쓴다.
+                if not _rewrite_series_by_name(chart, bar_name, labels, values):
+                    cd = CategoryChartData()
+                    cd.categories = labels
+                    cd.add_series(bar_name, values)
+                    chart.replace_data(cd)
+                all_series_names = [s.name for s in chart.series]
+                delta_name = next((n for n in all_series_names if n != bar_name), None)
+                if delta_name:
+                    deltas = [None] + [values[i] - values[i - 1] for i in range(1, len(values))]
+                    _rewrite_series_by_name(chart, delta_name, labels, deltas)
     if not found_monthly:
         confirm.add("PPT/팔로워", "월간 팔로워 수 추이", "전월 PPT에서 월간 팔로워 추이 차트를 찾지 못함(템플릿 구성 확인 필요)")
     if not found_blog_monthly:
