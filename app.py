@@ -27,7 +27,7 @@ from core.raw_data import (
 from core.ppt_report import build_ppt
 from core.confirm import ConfirmLog
 
-st.set_page_config(page_title="청년상인 로우데이터 취합", layout="wide")
+st.set_page_config(page_title="청년상인 월간보고서 자동 작성", layout="wide")
 
 # 로우데이터=블루, 월간보고서 PPT=퍼플 두 계열로만 색을 쓴다(카드별 개별 색상 없음).
 # 주의사항(수기 입력/확인 필요)에만 제한적으로 앰버를 쓴다.
@@ -41,7 +41,7 @@ AMBER_BG = "#FFF8E7"
 
 st.markdown(f"""
 <style>
-.stApp {{ background: #FFFFFF; }}
+.stApp {{ background: #F3F4F6; }}
 h1, h2, h3, p, span, label, div {{ color: {TEXT_PRIMARY}; }}
 [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] * {{ color: {TEXT_SECONDARY} !important; }}
 
@@ -195,7 +195,7 @@ def manual_note(text):
     st.markdown(f'<div class="manual-note">✏️ 수기 입력/확인 필요: {text}</div>', unsafe_allow_html=True)
 
 
-st.title("청년상인 로우데이터 취합")
+st.title("청년상인 월간보고서 자동 작성")
 st.caption("로우데이터와 월간보고서 PPT는 서로 독립적으로 만들 수 있습니다.")
 
 for key in ("xlsx_result", "ppt_result"):
