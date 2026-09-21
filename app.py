@@ -87,13 +87,15 @@ div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] > div[data-testid
    컨테이너에 Streamlit이 붙여주는 st-key-* 클래스를 사용. */
 div.st-key-panel_raw > div[data-testid="stVerticalBlock"] {{
     background: {PANEL_BG["blue"]} !important;
-    border: 1px solid {BORDER_COLOR} !important;
+    border: none !important;
     border-radius: 14px !important;
+    box-shadow: 0 1px 4px rgba(23, 32, 51, 0.08) !important;
 }}
 div.st-key-panel_ppt > div[data-testid="stVerticalBlock"] {{
     background: {PANEL_BG["purple"]} !important;
-    border: 1px solid {BORDER_COLOR} !important;
+    border: none !important;
     border-radius: 14px !important;
+    box-shadow: 0 1px 4px rgba(23, 32, 51, 0.08) !important;
 }}
 
 .card-accent {{
@@ -202,7 +204,7 @@ for key in ("xlsx_result", "ppt_result"):
     if key not in st.session_state:
         st.session_state[key] = None
 
-col_raw, col_ppt = st.columns(2, gap="large")
+col_raw, col_ppt = st.columns(2, gap="medium")
 
 # =============================================================================
 # 왼쪽: 로우데이터
