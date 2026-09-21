@@ -60,12 +60,12 @@ div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] {
 div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
     flex: 1 1 auto;
     height: 100%;
-    padding: 4px 2px 2px 2px;
+    padding: 10px 12px 8px 12px !important;
 }
 .card-accent {
     height: 5px;
     border-radius: 6px;
-    margin: -0.9rem -0.1rem 14px -0.1rem;
+    margin: -0.9rem -0.1rem 8px -0.1rem;
 }
 .card-title {
     font-weight: 700;
@@ -75,16 +75,16 @@ div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] > div[data-testid
 .card-desc {
     color: #6b7280;
     font-size: 12.5px;
-    margin-bottom: 14px;
+    margin-bottom: 8px;
 }
 .manual-note {
     color: #9a6b00;
     background: #fff8e6;
     border-radius: 6px;
     font-size: 12px;
-    padding: 6px 10px;
-    margin-top: 6px;
-    line-height: 1.5;
+    padding: 5px 9px;
+    margin-top: 5px;
+    line-height: 1.4;
 }
 .section-row {
     display: flex;
@@ -166,26 +166,26 @@ col_raw, col_ppt = st.columns(2, gap="large")
 with col_raw, st.container(border=True):
     st.markdown('<div class="sheet-title">로우데이터</div>', unsafe_allow_html=True)
 
-    section_header(1, "입력 파일", "전월 파일과 이번 달 입력 파일을 업로드하세요. ★는 필수입니다.", "blue")
+    section_header(1, "입력 파일", "전월 로우데이터와 이번 달 발행리스트를 업로드하세요. ★는 필수입니다.", "blue")
     c1, c2 = st.columns(2)
     with c1, st.container(border=True):
-        card_top("blue", "전월 최종본", "이번 달 블록을 이어붙일 기준 파일입니다.")
+        card_top("blue", "전월 로우데이터", "이번 달 블록을 이어붙일 기준 파일입니다.")
         prev_raw = st.file_uploader("★ 전월 로우데이터(취합) 엑셀", type=["xlsx"], key="prev_raw")
-        prev_ppt = st.file_uploader("전월 월간보고서 PPT (선택 — 오른쪽 PPT 만들기의 템플릿으로 쓰입니다)",
-                                     type=["pptx"], key="prev_ppt")
     with c2, st.container(border=True):
-        card_top("blue", "이번 달 입력 데이터")
+        card_top("blue", "이번 달 발행리스트")
         publish_list_file = st.file_uploader("★ 이번 달 콘텐츠 발행리스트", type=["xlsx", "xls"], key="publish_list")
         manual_note("발행리스트에 있는 블로그 콘텐츠는 성과 원본이 없어 조회/공감/댓글이 "
                     "'확인 필요'로 남습니다 — 엑셀에서 직접 채워주세요.")
 
     section_header(2, "채널 원본 데이터", "채널별 성과 및 광고 데이터를 업로드하세요. 없으면 해당 항목은 '확인 필요'로 비워둡니다.", "green")
-    c3, _c4 = st.columns(2)
+    c3, c4 = st.columns(2)
     with c3, st.container(border=True):
-        card_top("green", "인스타그램")
+        card_top("green", "콘텐츠 데이터")
         content_raw_file = st.file_uploader(
             "★ 인스타그램 콘텐츠 원본 (플랫폼 CSV 또는 정리본 xlsx)",
             type=["csv", "xlsx"], key="content_raw")
+    with c4, st.container(border=True):
+        card_top("green", "AD 데이터")
         ad_report_file = st.file_uploader("★ 인스타그램 AD 원본 (Meta Ads 내보내기)", type=["xlsx"], key="ad_report")
         manual_note("광고의 '타깃' 설정값은 원본에 없어 '확인 필요'로 남습니다 — 엑셀에서 직접 채워주세요. "
                     "제휴(인플루언서 체험단) 데이터는 오른쪽 'PPT 만들기'에서 입력합니다.")
@@ -193,7 +193,7 @@ with col_raw, st.container(border=True):
     st.write("")
     xlsx_ready = bool(prev_raw and publish_list_file and content_raw_file and ad_report_file)
     if not xlsx_ready:
-        st.info("전월 최종본, 발행리스트, 인스타그램 콘텐츠 원본, AD 원본은 필수 입력입니다.")
+        st.info("전월 로우데이터, 발행리스트, 콘텐츠 데이터, AD 데이터는 필수 입력입니다.")
 
     if st.button("로우데이터 만들기", disabled=not xlsx_ready, type="primary", key="build_xlsx_btn",
                  use_container_width=True):
@@ -245,30 +245,31 @@ with col_raw, st.container(border=True):
 # =============================================================================
 with col_ppt, st.container(border=True):
     st.markdown('<div class="sheet-title">월간보고서 PPT</div>', unsafe_allow_html=True)
-    st.caption("왼쪽 '전월 최종본'에 올린 PPT를 템플릿으로 씁니다. 로우데이터는 여기서 별도로 업로드합니다 "
-               "— 로우데이터를 만든 뒤 팔로워/블로그 등 확인 필요 항목을 엑셀에서 직접 채우고 그 파일을 올려주세요.")
+    st.caption("로우데이터는 여기서 별도로 업로드합니다 — 로우데이터를 만든 뒤 팔로워/블로그 등 확인 필요 "
+               "항목을 엑셀에서 직접 채우고 그 파일을 올려주세요.")
 
-    with st.container(border=True):
-        card_top("purple", "최종 로우데이터 입력")
-        final_raw_file = st.file_uploader(
-            "★ 최종 로우데이터(취합) 엑셀", type=["xlsx"], key="final_raw",
-            label_visibility="visible")
+    section_header(1, "입력 파일", "전월 PPT 템플릿과 이번 달 최종 로우데이터를 업로드하세요. ★는 필수입니다.", "purple")
+    cp1, cp2 = st.columns(2)
+    with cp1, st.container(border=True):
+        card_top("purple", "전월 월간보고서", "이번 달 PPT를 만들 때 템플릿으로 씁니다.")
+        prev_ppt = st.file_uploader("전월 월간보고서 PPT (선택)", type=["pptx"], key="prev_ppt")
+    with cp2, st.container(border=True):
+        card_top("purple", "이번 달 로우데이터(최종)")
+        final_raw_file = st.file_uploader("★ 최종 로우데이터(취합) 엑셀", type=["xlsx"], key="final_raw")
         manual_note("왼쪽에서 만든 뒤, 팔로워 수·블로그 성과처럼 '확인 필요'로 남은 값을 엑셀에서 "
                     "직접 채우고 나서 올려주세요. 수식은 그대로 두셔도 됩니다.")
 
-    st.divider()
-    st.markdown('<div class="section-title" style="font-size:16px;color:#7C3AED;">기타 데이터입력</div>',
-                unsafe_allow_html=True)
+    section_header(2, "기타 데이터(PPT용)", "필요할 때만 올리세요. 없으면 해당 항목은 자동으로 채워지지 않습니다.", "purple")
     c5, c6 = st.columns(2)
     with c5, st.container(border=True):
-        card_top("purple", "인스타그램 팔로워 비중")
+        card_top("purple", "인스타그램 팔로워")
         follower_csv_file = st.file_uploader(
             "인스타그램 팔로워 비중(CSV, 선택)", type=["csv"], key="follower_csv")
         manual_note("Meta 인스타그램 인사이트 '타깃' 내보내기 CSV입니다. 올리면 로우데이터에 "
                     "'인스타그램 팔로워 타깃' 시트가 추가되고 PPT의 성별/연령 차트도 갱신됩니다. "
                     "값은 그 시트에서 언제든 손으로 고칠 수 있습니다.")
     with c6, st.container(border=True):
-        card_top("purple", "제휴(오픈보고서)")
+        card_top("purple", "제휴 오픈보고서")
         partnership_file_ppt = st.file_uploader(
             "제휴(인플루언서 체험단) 오픈 보고서 (선택)", type=["xlsx"], key="partnership_ppt")
         manual_note("올리지 않으면 로우데이터에 '제휴' 시트가 추가되지 않습니다.")
@@ -276,9 +277,9 @@ with col_ppt, st.container(border=True):
     st.write("")
     ppt_ready = bool(final_raw_file) and bool(prev_ppt)
     if not final_raw_file:
-        st.info("최종 로우데이터 엑셀은 필수 입력입니다.")
+        st.info("이번 달 로우데이터(최종) 엑셀은 필수 입력입니다.")
     elif not prev_ppt:
-        st.info("왼쪽 '전월 최종본'에 전월 월간보고서 PPT를 업로드해주세요(PPT 템플릿으로 사용됩니다).")
+        st.info("위 '전월 월간보고서' 카드에 전월 PPT를 업로드해주세요(이번 달 PPT의 템플릿으로 사용됩니다).")
 
     if st.button("PPT 만들기", disabled=not ppt_ready, type="primary", key="build_ppt_btn",
                  use_container_width=True):
