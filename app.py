@@ -160,6 +160,12 @@ div.stButton > button[kind="primary"] {{
     border-radius: 8px;
     box-shadow: none;
 }}
+/* 버튼 배경색이 진한 블루/퍼플이라 위의 전역 텍스트 색상 규칙(어두운 회색)이
+   그대로 적용되면 글씨가 잘 안 보인다 - 버튼 안의 글자만 흰색으로 강제. */
+div.stButton > button[kind="primary"],
+div.stButton > button[kind="primary"] * {{
+    color: #FFFFFF !important;
+}}
 div.st-key-build_xlsx_btn button[kind="primary"] {{
     background-color: {COLORS["blue"]};
     border-color: {COLORS["blue"]};
