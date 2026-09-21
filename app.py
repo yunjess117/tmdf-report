@@ -29,99 +29,143 @@ from core.confirm import ConfirmLog
 
 st.set_page_config(page_title="청년상인 로우데이터 취합", layout="wide")
 
-COLORS = {"blue": "#2563EB", "green": "#16A34A", "purple": "#7C3AED",
-          "orange": "#EA580C"}
+# 로우데이터=블루, 월간보고서 PPT=퍼플 두 계열로만 색을 쓴다(카드별 개별 색상 없음).
+# 주의사항(수기 입력/확인 필요)에만 제한적으로 앰버를 쓴다.
+COLORS = {"blue": "#2563EB", "purple": "#7C5CE8", "amber": "#F59E0B"}
+PANEL_BG = {"blue": "#EFF6FF", "purple": "#F5F3FF"}
+TEXT_PRIMARY = "#172033"
+TEXT_SECONDARY = "#7B8494"
+BORDER_COLOR = "#E5E7EB"
+CARD_BG = "#FFFFFF"
+AMBER_BG = "#FFF8E7"
 
-st.markdown("""
+st.markdown(f"""
 <style>
+.stApp {{ background: #FFFFFF; }}
+h1, h2, h3, p, span, label, div {{ color: {TEXT_PRIMARY}; }}
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] * {{ color: {TEXT_SECONDARY} !important; }}
+
 /* 같은 행에 나란히 있는 카드(컬럼)들의 너비와 높이를 강제로 맞춘다.
    Streamlit의 stColumn은 기본이 display:block이고 그 안의 카드 컨테이너
    (stLayoutWrapper)는 flex-grow:0이라, 내용이 짧은 카드는 높이가 안 늘어나서
    같은 행 카드끼리 하단선이 들쭉날쭉해진다 - block을 flex-column으로 바꾸고
    flex-grow/height:100%를 체인 전체(컬럼 -> 카드 래퍼 -> 카드 내부 블록)에
    강제로 걸어 내용이 짧은 카드도 옆 카드 높이만큼 늘어나도록 만든다. */
-div[data-testid="stHorizontalBlock"] {
+div[data-testid="stHorizontalBlock"] {{
     align-items: stretch;
-}
-div[data-testid="stColumn"] {
+}}
+div[data-testid="stColumn"] {{
     display: flex;
     flex-direction: column;
-}
-div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] {
+}}
+div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] {{
     flex: 1 1 auto;
     height: 100%;
-}
-div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] {
+}}
+div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] {{
     flex: 1 1 auto;
     height: 100%;
     display: flex;
     flex-direction: column;
-}
-div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
+}}
+
+/* 카드(업로드 단위) 공통 스타일 - 흰 배경 + 연한 중립 테두리, 그림자/그라데이션 없음.
+   모든 카드가 동일한 스타일을 쓰고, 영역 구분은 아래 패널 배경 틴트와 accent
+   바/배지/버튼 색으로만 표현한다. */
+div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {{
     flex: 1 1 auto;
     height: 100%;
-    padding: 10px 12px 8px 12px !important;
-}
-.card-accent {
-    height: 5px;
-    border-radius: 6px;
+    background: {CARD_BG};
+    border: 1px solid {BORDER_COLOR} !important;
+    border-radius: 10px;
+    box-shadow: none !important;
+    padding: 14px 16px 12px 16px !important;
+}}
+
+/* 패널(로우데이터/월간보고서 PPT) 전체 배경 틴트 - 위 카드 규칙 다음에 와서
+   같은 우선순위에서 소스 순서로 이긴다. key=panel_raw/panel_ppt로 지정한
+   컨테이너에 Streamlit이 붙여주는 st-key-* 클래스를 사용. */
+div.st-key-panel_raw > div[data-testid="stVerticalBlock"] {{
+    background: {PANEL_BG["blue"]} !important;
+    border: 1px solid {BORDER_COLOR} !important;
+    border-radius: 14px !important;
+}}
+div.st-key-panel_ppt > div[data-testid="stVerticalBlock"] {{
+    background: {PANEL_BG["purple"]} !important;
+    border: 1px solid {BORDER_COLOR} !important;
+    border-radius: 14px !important;
+}}
+
+.card-accent {{
+    height: 4px;
+    border-radius: 4px;
     margin: -0.9rem -0.1rem 8px -0.1rem;
-}
-.card-title {
-    font-weight: 700;
-    font-size: 16px;
+}}
+.card-title {{
+    font-weight: 600;
+    font-size: 15px;
+    color: {TEXT_PRIMARY};
     margin-bottom: 2px;
-}
-.card-desc {
-    color: #6b7280;
+}}
+.card-desc {{
+    color: {TEXT_SECONDARY};
     font-size: 12.5px;
     margin-bottom: 8px;
-}
-.manual-note {
-    color: #9a6b00;
-    background: #fff8e6;
-    border-radius: 6px;
-    font-size: 12px;
+}}
+.manual-note {{
+    color: #8A5A0A;
+    background: {AMBER_BG};
+    border-left: 3px solid {COLORS["amber"]};
+    border-radius: 4px;
+    font-size: 11.5px;
     padding: 5px 9px;
     margin-top: 5px;
     line-height: 1.4;
-}
-.section-row {
+}}
+.section-row {{
     display: flex;
     align-items: center;
     gap: 10px;
     margin-top: 6px;
-}
-.section-badge {
-    width: 28px;
-    height: 28px;
-    min-width: 28px;
+}}
+.section-badge {{
+    width: 26px;
+    height: 26px;
+    min-width: 26px;
     border-radius: 50%;
     color: white;
     display: flex;
     align-items: center;
     justify-content: center;
     font-weight: 700;
-    font-size: 14px;
-}
-.section-title {
-    font-size: 22px;
-    font-weight: 700;
-}
-.section-desc {
-    color: #6b7280;
     font-size: 13px;
-    margin: 4px 0 16px 38px;
-}
-.sheet-title {
-    font-size: 26px;
+}}
+.section-title {{
+    font-size: 19px;
+    font-weight: 700;
+}}
+.section-desc {{
+    color: {TEXT_SECONDARY};
+    font-size: 12.5px;
+    margin: 4px 0 14px 36px;
+}}
+.sheet-title {{
+    font-size: 22px;
     font-weight: 800;
-    margin-bottom: 4px;
-}
-div.stButton > button[kind="primary"] {
-    background-color: var(--accent-color, #2563EB);
-    border-color: var(--accent-color, #2563EB);
-}
+    margin-bottom: 2px;
+}}
+div.stButton > button[kind="primary"] {{
+    border-radius: 8px;
+    box-shadow: none;
+}}
+div.st-key-build_xlsx_btn button[kind="primary"] {{
+    background-color: {COLORS["blue"]};
+    border-color: {COLORS["blue"]};
+}}
+div.st-key-build_ppt_btn button[kind="primary"] {{
+    background-color: {COLORS["purple"]};
+    border-color: {COLORS["purple"]};
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -163,8 +207,8 @@ col_raw, col_ppt = st.columns(2, gap="large")
 # =============================================================================
 # 왼쪽: 로우데이터
 # =============================================================================
-with col_raw, st.container(border=True):
-    st.markdown('<div class="sheet-title">로우데이터</div>', unsafe_allow_html=True)
+with col_raw, st.container(border=True, key="panel_raw"):
+    st.markdown(f'<div class="sheet-title" style="color:{COLORS["blue"]};">로우데이터</div>', unsafe_allow_html=True)
 
     section_header(1, "입력 파일", "전월 로우데이터와 이번 달 발행리스트를 업로드하세요. ★는 필수입니다.", "blue")
     c1, c2 = st.columns(2)
@@ -177,15 +221,15 @@ with col_raw, st.container(border=True):
         manual_note("발행리스트에 있는 블로그 콘텐츠는 성과 원본이 없어 조회/공감/댓글이 "
                     "'확인 필요'로 남습니다 — 엑셀에서 직접 채워주세요.")
 
-    section_header(2, "채널 원본 데이터", "채널별 성과 및 광고 데이터를 업로드하세요. 없으면 해당 항목은 '확인 필요'로 비워둡니다.", "green")
+    section_header(2, "채널 원본 데이터", "채널별 성과 및 광고 데이터를 업로드하세요. 없으면 해당 항목은 '확인 필요'로 비워둡니다.", "blue")
     c3, c4 = st.columns(2)
     with c3, st.container(border=True):
-        card_top("green", "콘텐츠 데이터")
+        card_top("blue", "콘텐츠 데이터")
         content_raw_file = st.file_uploader(
             "★ 인스타그램 콘텐츠 원본 (플랫폼 CSV 또는 정리본 xlsx)",
             type=["csv", "xlsx"], key="content_raw")
     with c4, st.container(border=True):
-        card_top("green", "AD 데이터")
+        card_top("blue", "AD 데이터")
         ad_report_file = st.file_uploader("★ 인스타그램 AD 원본 (Meta Ads 내보내기)", type=["xlsx"], key="ad_report")
         manual_note("광고의 '타깃' 설정값은 원본에 없어 '확인 필요'로 남습니다 — 엑셀에서 직접 채워주세요. "
                     "제휴(인플루언서 체험단) 데이터는 오른쪽 'PPT 만들기'에서 입력합니다.")
@@ -243,8 +287,8 @@ with col_raw, st.container(border=True):
 # =============================================================================
 # 오른쪽: 월간보고서 PPT
 # =============================================================================
-with col_ppt, st.container(border=True):
-    st.markdown('<div class="sheet-title">월간보고서 PPT</div>', unsafe_allow_html=True)
+with col_ppt, st.container(border=True, key="panel_ppt"):
+    st.markdown(f'<div class="sheet-title" style="color:{COLORS["purple"]};">월간보고서 PPT</div>', unsafe_allow_html=True)
     st.caption("로우데이터는 여기서 별도로 업로드합니다 — 로우데이터를 만든 뒤 팔로워/블로그 등 확인 필요 "
                "항목을 엑셀에서 직접 채우고 그 파일을 올려주세요.")
 
