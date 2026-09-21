@@ -34,7 +34,32 @@ COLORS = {"blue": "#2563EB", "green": "#16A34A", "purple": "#7C3AED",
 
 st.markdown("""
 <style>
-div[data-testid="stVerticalBlockBorderWrapper"] > div > div[data-testid="stVerticalBlock"] {
+/* 같은 행에 나란히 있는 카드(컬럼)들의 너비와 높이를 강제로 맞춘다.
+   Streamlit의 stColumn은 기본이 display:block이고 그 안의 카드 컨테이너
+   (stLayoutWrapper)는 flex-grow:0이라, 내용이 짧은 카드는 높이가 안 늘어나서
+   같은 행 카드끼리 하단선이 들쭉날쭉해진다 - block을 flex-column으로 바꾸고
+   flex-grow/height:100%를 체인 전체(컬럼 -> 카드 래퍼 -> 카드 내부 블록)에
+   강제로 걸어 내용이 짧은 카드도 옆 카드 높이만큼 늘어나도록 만든다. */
+div[data-testid="stHorizontalBlock"] {
+    align-items: stretch;
+}
+div[data-testid="stColumn"] {
+    display: flex;
+    flex-direction: column;
+}
+div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] {
+    flex: 1 1 auto;
+    height: 100%;
+}
+div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] {
+    flex: 1 1 auto;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+div[data-testid="stColumn"] div[data-testid="stLayoutWrapper"] > div[data-testid="stVerticalBlock"] {
+    flex: 1 1 auto;
+    height: 100%;
     padding: 4px 2px 2px 2px;
 }
 .card-accent {

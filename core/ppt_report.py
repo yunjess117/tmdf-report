@@ -376,17 +376,17 @@ BLOG_CONTENT_SPEC = [
 AD_PARTICIPATION_SPEC = [
     (0, 0, "no"), (1, 3, "text"), (2, 4, "text"), (3, 5, "text"),
     (4, 6, "date"), (5, 7, "date"), (6, 8, "num"), (7, 9, "num"),
-    (8, 10, "num"), (9, 11, "num"), (10, 12, "num"), (11, 13, "text"),
+    (8, 10, "num"), (9, 11, "num"), (10, 12, "num"), (11, 13, "num"),
 ]
 AD_REACH_SPEC = [
     (0, 0, "no"), (1, 3, "text"), (2, 4, "text"), (3, 5, "text"),
     (4, 6, "date"), (5, 7, "date"), (6, 8, "num"), (7, 9, "num"),
-    (8, 10, "num"), (9, 12, "num"), (10, 13, "text"),
+    (8, 10, "num"), (9, 12, "num"), (10, 13, "num"),
 ]
 AD_VIDEO_SPEC = [
     (0, 0, "text"), (1, 1, "text"), (2, 2, "date"), (3, 3, "text"), (4, 4, "text"),
     (5, 5, "text"), (6, 6, "date"), (7, 7, "date"), (8, 8, "num"), (9, 9, "num"),
-    (10, 10, "pct"), (11, 11, "num"), (12, 12, "num"), (13, 13, "num"), (14, 14, "text"),
+    (10, 10, "pct"), (11, 11, "num"), (12, 12, "num"), (13, 13, "num"), (14, 14, "num"),
 ]
 
 CONTENT_URL_IDX = 4
@@ -408,6 +408,18 @@ def _format_value(v, kind):
     if kind == "no":
         return str(int(v)) if isinstance(v, (int, float)) else str(v)
     return str(v)
+
+
+_CONTENT_COUNT_RE = re.compile(r"^-\s*총\s*\d+건\s*\(영상\s*\d+건,\s*카드뉴스\s*\d+건\)$")
+
+
+def fill_content_count_label(slide, rows):
+    """'- 총 7건 (영상 1건, 카드뉴스 6건)' 텍스트를 이번 달 실제 건수로 갱신한다."""
+    video_n = sum(1 for r in rows if r[5] == "영상")
+    card_n = sum(1 for r in rows if r[5] == "카드뉴스")
+    for shape in slide.shapes:
+        if shape.has_text_frame and _CONTENT_COUNT_RE.match(shape.text_frame.text.strip()):
+            set_cell_text(shape, f"- 총 {len(rows)}건 (영상 {video_n}건, 카드뉴스 {card_n}건)")
 
 
 def fill_data_table(table, spec, rows, avgs, totals, url_idx=None, url_ppt_col=None):
@@ -589,19 +601,49 @@ def fill_channel_compare_table(table, sheet, src: XlsxSource, confirm):
         _change_text_and_color(prev_num, cur_num, table.rows[r].cells[3])
 
 
+_AD_BUDGET_TOTAL_SOURCES = (
+    ("AD 데이터 (참여)", 13, 15), ("AD 데이터 (도달)", 13, 15), ("AD 데이터 (동영상조회)", 14, 16),
+)
+
+
+def _ad_budget_total(src: XlsxSource):
+    """참여/도달/동영상조회 세 시트의 '예산' 합계 행을 더한 이번 달 총 광고 예산.
+    (운영요약 49행은 '지출' 합계라 '예산'과 값이 다를 수 있어 따로 계산한다.)"""
+    total, found = 0, False
+    for sheet, idx, max_col in _AD_BUDGET_TOTAL_SOURCES:
+        _rows, _avg, totals = src.block_rows(sheet, max_col=max_col)
+        if totals and idx < len(totals) and isinstance(totals[idx], (int, float)):
+            total += totals[idx]
+            found = True
+    return total if found else None
+
+
 def fill_ad_overview_table(table, src: XlsxSource, confirm):
     ws = src.wb["운영요약"]
+    ws_data = src.wb_data["운영요약"] if src.wb_data else None
     set_cell_text(table.rows[0].cells[1], ws.cell(row=36, column=3).value)
     set_cell_text(table.rows[0].cells[2], ws.cell(row=36, column=4).value)
 
     for r in range(1, len(table.rows)):
         row_num = 36 + r
-        prev_v = ws.cell(row=row_num, column=3).value
-        cur_v = ws.cell(row=row_num, column=4).value
-        chg_v = ws.cell(row=row_num, column=5).value
-        set_cell_text(table.rows[r].cells[1], _fmt_num(prev_v) if isinstance(prev_v, (int, float)) else (prev_v or ""))
-        set_cell_text(table.rows[r].cells[2], _fmt_num(cur_v) if isinstance(cur_v, (int, float)) else (cur_v or ""))
-        if isinstance(chg_v, (int, float)):
+        # 이 표의 몇몇 행(특히 '총 광고 예산'의 전월 칸)은 다음 달 자동화 때 참조
+        # 수식(예: '=C28')으로 바뀌어, 라이브 셀을 그대로 읽으면 수식 문자열이 그대로
+        # 노출된다. data_only 스냅샷 값으로 대체하는 _numval을 거쳐서 읽는다.
+        prev_v = _numval(ws, ws_data, row_num, 3)
+        cur_v = _numval(ws, ws_data, row_num, 4)
+        chg_v = _numval(ws, ws_data, row_num, 5)
+        label = table.rows[r].cells[0].text.strip()
+        if label == "총 광고 예산":
+            # 운영요약 시트의 이 행은 '지출(집행 스펜드)' 합계라 '예산'과 다를 수 있어
+            # 세 AD 시트의 예산(만원 올림) 합계 행을 따로 더해 채운다.
+            budget_total = _ad_budget_total(src)
+            if budget_total is None:
+                confirm.add("PPT/광고개요", "총 광고 예산", "예산 합계를 계산하지 못해 확인 필요")
+            else:
+                cur_v = budget_total
+        set_cell_text(table.rows[r].cells[1], _fmt_num(prev_v) if prev_v is not None else CONFIRM_NEEDED)
+        set_cell_text(table.rows[r].cells[2], _fmt_num(cur_v) if cur_v is not None else CONFIRM_NEEDED)
+        if chg_v is not None:
             set_cell_text(table.rows[r].cells[3], f"{chg_v:+.1f}%")
         else:
             set_cell_text(table.rows[r].cells[3], CONFIRM_NEEDED)
@@ -805,16 +847,31 @@ def _rename_partner_count_label(slide, insta_n, blog_n):
 # ---------------------------------------------------------------------------
 
 _DATE_CAT_RE = re.compile(r"^\d+/\d+\(")
+_YEAR_MONTH_CAT_RE = re.compile(r"^\d+년\s*\d+월$")
+
+
+def _monthly_values(monthly, month_num, key):
+    """month_num-2..month_num 3개월 값. 개별 월이 비어 있으면(None) 0으로 채워
+    chart.replace_data()에 None이 들어가 차트가 깨지는 것을 막는다."""
+    labels = [f"{m}월" for m in range(month_num - 2, month_num + 1)]
+    values = [monthly.get(lbl, {}).get(key) for lbl in labels]
+    return labels, [v if isinstance(v, (int, float)) else 0 for v in values]
 
 
 def fill_follower_trend_charts(prs, wb, wb_data, target_month, confirm):
+    """8P(인스타 월간/일간 팔로워 추이)와 16P(블로그 이웃수 추이, 카테고리가
+    '26년 n월' 형식이라 8P와 다르게 구분) 네이티브 차트를 '채널 팔로워' 시트로 채운다.
+    이번 달 값 자체가 없으면(수기 입력 전 파일) 차트를 건드리지 않고 건너뛴다 -
+    None을 그대로 넣으면 PowerPoint에서 차트가 비거나 깨지는 문제가 있었다."""
     month_num = month_to_int(target_month)
     monthly = _read_follower_monthly(wb, wb_data)
     daily = _read_follower_daily(wb, wb_data, target_month)
     daily = [d for d in daily if d["insta"] is not None]
     daily.sort(key=lambda d: d["date"])
+    cur_insta = monthly.get(target_month, {}).get("insta")
+    cur_blog = monthly.get(target_month, {}).get("blog")
 
-    filled_monthly = filled_daily = False
+    found_monthly = found_blog_monthly = found_daily = False
     for slide in prs.slides:
         for shape in slide.shapes:
             if not shape.has_chart:
@@ -827,20 +884,36 @@ def fill_follower_trend_charts(prs, wb, wb_data, target_month, confirm):
             if not cats:
                 continue
             series_names = [s.name for s in chart.plots[0].series]
-            # 월간 추이 차트는 카테고리 3개(첫 실행 전 템플릿엔 앞 슬롯이 빈 문자열일 수
-            # 있어 전부 'n월' 형식일 거라 가정하지 않는다) + series명 '팔로워'로 식별.
-            # 일간 차트(날짜 카테고리 다수)와는 카테고리 개수로 구분된다.
-            if len(cats) == 3 and "팔로워" in series_names and not any(
-                _DATE_CAT_RE.match(str(c)) for c in cats
-            ):
-                labels = [f"{m}월" for m in range(month_num - 2, month_num + 1)]
-                values = [monthly.get(lbl, {}).get("insta") for lbl in labels]
+            if not any("팔로워" in n for n in series_names):
+                continue
+
+            if len(cats) == 3 and any(_YEAR_MONTH_CAT_RE.match(str(c)) for c in cats):
+                # 블로그 '이웃 수 추이' 차트: 카테고리가 '26년 8월'처럼 연도가 붙어있다.
+                found_blog_monthly = True
+                if cur_blog is None:
+                    confirm.add("PPT/블로그", "이웃 수 추이", "'채널 팔로워' 시트에 이번 달 이웃수가 없어 건너뜀")
+                    continue
+                m = re.match(r"^(\d+년)", str(cats[-1]))
+                year_prefix = m.group(1) if m else ""
+                month_labels, values = _monthly_values(monthly, month_num, "blog")
+                labels = [f"{year_prefix} {lbl}".strip() for lbl in month_labels]
+                cd = CategoryChartData()
+                cd.categories = labels
+                cd.add_series(series_names[0], values)
+                chart.replace_data(cd)
+            elif len(cats) == 3 and not any(_DATE_CAT_RE.match(str(c)) for c in cats):
+                # 인스타그램 '월간 팔로워 수 추이' 차트: 카테고리가 'n월' 형식(연도 없음).
+                found_monthly = True
+                if cur_insta is None:
+                    confirm.add("PPT/팔로워", "월간 팔로워 수 추이", "'채널 팔로워' 시트에 이번 달 팔로워 수가 없어 건너뜀")
+                    continue
+                labels, values = _monthly_values(monthly, month_num, "insta")
                 cd = CategoryChartData()
                 cd.categories = labels
                 cd.add_series("팔로워", values)
                 chart.replace_data(cd)
-                filled_monthly = True
-            elif cats and _DATE_CAT_RE.match(str(cats[0])) and any("팔로워" in n for n in series_names):
+            elif _DATE_CAT_RE.match(str(cats[0])):
+                found_daily = True
                 if not daily:
                     confirm.add("PPT/팔로워", "일간 팔로워 수", "'채널 팔로워' 시트에 이번 달 수기 입력 값이 없어 건너뜀")
                     continue
@@ -848,12 +921,13 @@ def fill_follower_trend_charts(prs, wb, wb_data, target_month, confirm):
                 values = [d["insta"] for d in daily]
                 cd = CategoryChartData()
                 cd.categories = labels
-                cd.add_series(series_names[0] if series_names else "팔로워 수", values)
+                cd.add_series(series_names[0], values)
                 chart.replace_data(cd)
-                filled_daily = True
-    if not filled_monthly:
+    if not found_monthly:
         confirm.add("PPT/팔로워", "월간 팔로워 수 추이", "전월 PPT에서 월간 팔로워 추이 차트를 찾지 못함(템플릿 구성 확인 필요)")
-    if not filled_daily:
+    if not found_blog_monthly:
+        confirm.add("PPT/블로그", "이웃 수 추이", "전월 PPT에서 블로그 이웃수 추이 차트를 찾지 못함(템플릿 구성 확인 필요)")
+    if not found_daily:
         confirm.add("PPT/팔로워", "일간 팔로워 수", "전월 PPT에서 일간 팔로워 차트를 찾지 못함(템플릿 구성 확인 필요)")
 
 
@@ -952,6 +1026,7 @@ def build_ppt(prev_ppt_file, wb, target_month, confirm, block_cache=None, wb_dat
                     rows, avgs, totals = src.block_rows("인스타그램", max_col=17)
                     fill_data_table(table, INSTAGRAM_CONTENT_SPEC, rows, avgs, totals,
                                      url_idx=CONTENT_URL_IDX, url_ppt_col=2)
+                    fill_content_count_label(slide, rows)
                 elif kind == "content_blog":
                     rows, avgs, totals = src.block_rows("블로그", max_col=11)
                     fill_data_table(table, BLOG_CONTENT_SPEC, rows, avgs, totals,
