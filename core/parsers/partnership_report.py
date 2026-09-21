@@ -55,6 +55,18 @@ def _find_header_row(ws, must_contain: str, search_rows=20):
     return None, {}
 
 
+def _col(header, name):
+    """헤더 열 찾기 - 앞뒤 공백/대소문자가 살짝 달라도(예: 'URL ', 'url') 찾도록
+    정확히 일치하는 게 없으면 정규화(strip + upper)해서 한 번 더 찾는다."""
+    if name in header:
+        return header[name]
+    target = name.strip().upper()
+    for key, col in header.items():
+        if isinstance(key, str) and key.strip().upper() == target:
+            return col
+    return None
+
+
 def _get_url(ws, row, col):
     if not col:
         return None
@@ -89,7 +101,7 @@ def parse_partnership_report(file_like) -> dict:
                     likes=get(r, "좋아요 수"),
                     comments=get(r, "댓글 수"),
                     note=str(get(r, "비고") or "").strip(),
-                    url=_get_url(ws, r, header.get("URL")),
+                    url=_get_url(ws, r, _col(header, "URL")),
                 ))
 
     if "블로그 집행 보고서" in wb.sheetnames:
@@ -115,7 +127,7 @@ def parse_partnership_report(file_like) -> dict:
                     comments=get(r, "댓글 수"),
                     likes=get(r, "공감 수"),
                     note=str(get(r, "비고") or "").strip(),
-                    url=_get_url(ws, r, header.get("URL")),
+                    url=_get_url(ws, r, _col(header, "URL")),
                 ))
 
     return {"인스타": insta_rows, "블로그": blog_rows}

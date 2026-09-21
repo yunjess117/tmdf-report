@@ -812,9 +812,19 @@ def fill_partnership_table(table, kind, src: XlsxSource, confirm):
         set_cell_text(ppt_row.cells[0], str(i + 1))
         for ppt_col, xlsx_idx, kind_fmt in col_map:
             set_cell_text(ppt_row.cells[ppt_col], _format_value(row[xlsx_idx], kind_fmt))
+        url_cell = ppt_row.cells[url_ppt_col]
         url = row[url_idx] if url_idx < len(row) else None
         if isinstance(url, str) and url.startswith("http"):
-            set_cell_hyperlink(ppt_row.cells[url_ppt_col], url)
+            set_cell_hyperlink(url_cell, url)
+        else:
+            # 이 셀은 표를 늘릴 때 전월 행을 그대로 복제해오기 때문에, 새 URL이
+            # 없다고 그냥 넘어가면 전월 링크가 지워지지 않고 그대로 남는다 -
+            # 이번 달 URL을 못 찾았으면 링크를 확실히 지우고 확인 필요로 남긴다.
+            for p in url_cell.text_frame.paragraphs:
+                for run in p.runs:
+                    run.hyperlink.address = None
+            confirm.add("PPT/제휴", f"{kind} NO.{i + 1}",
+                        "오픈보고서에서 URL을 찾지 못해 링크를 비움 - 직접 연결해주세요")
 
     total_ppt_row = table.rows[1 + len(rows)]
     set_cell_text(total_ppt_row.cells[2], "합 계")
@@ -879,6 +889,66 @@ def _rewrite_series_by_name(chart, series_name, labels, values):
     return False
 
 
+_C_NS = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
+
+
+def _force_dlbls_number_format(dLbls, format_code):
+    """<c:dLbls>에 numFmt를 강제로 지정한다. 포인트별 오버라이드(<c:dLbl>)가
+    있으면 상위 numFmt를 상속받지 않고 'General'로 표시되는 경우가 있어(실제
+    PowerPoint 렌더링에서 확인), 레벨 자체뿐 아니라 각 <c:dLbl> 오버라이드에도
+    똑같이 주입한다. CT_DLbls/CT_DLbl 스키마 순서상 numFmt는 dLbl* 뒤,
+    idx 바로 다음에 와야 한다."""
+    if dLbls is None:
+        return
+
+    def _set_numfmt(parent, insert_after):
+        old = parent.find(f"{_C_NS}numFmt")
+        if old is not None:
+            parent.remove(old)
+        numFmt = parent.makeelement(f"{_C_NS}numFmt", {"formatCode": format_code, "sourceLinked": "0"})
+        if insert_after is not None:
+            insert_after.addnext(numFmt)
+        else:
+            parent.insert(0, numFmt)
+
+    dlbl_overrides = dLbls.findall(f"{_C_NS}dLbl")
+    _set_numfmt(dLbls, dlbl_overrides[-1] if dlbl_overrides else None)
+    for dLbl in dlbl_overrides:
+        _set_numfmt(dLbl, dLbl.find(f"{_C_NS}idx"))
+
+
+def _set_series_number_format(chart, series_name, format_code):
+    """이름이 일치하는 series의 데이터 레이블 서식을 강제로 지정한다."""
+    for ser in chart._chartSpace.plotArea.sers:
+        tx = ser.find(f"{_C_NS}tx")
+        v = tx.find(f".//{_C_NS}v") if tx is not None else None
+        if v is None or v.text != series_name:
+            continue
+        _force_dlbls_number_format(ser.find(f"{_C_NS}dLbls"), format_code)
+
+
+def _clear_axis_fixed_scale(chart, plot_tag):
+    """콤보 차트에서 plot_tag(예: 'lineChart') plot이 쓰는 값 축의 고정 min/max를
+    지워 자동 스케일로 되돌린다. 전월 값 범위에 맞춰 고정돼 있던 축이 이번 달
+    값 범위와 안 맞아 그래프가 납작하게 눌려 보이는 문제를 막는다."""
+    plotArea = chart._chartSpace.plotArea
+    plot_el = plotArea.find(f"{_C_NS}{plot_tag}")
+    if plot_el is None:
+        return
+    axId_vals = {el.get("val") for el in plot_el.findall(f"{_C_NS}axId")}
+    for valAx in plotArea.findall(f"{_C_NS}valAx"):
+        axId_el = valAx.find(f"{_C_NS}axId")
+        if axId_el is None or axId_el.get("val") not in axId_vals:
+            continue
+        scaling = valAx.find(f"{_C_NS}scaling")
+        if scaling is None:
+            continue
+        for tag in ("max", "min"):
+            el = scaling.find(f"{_C_NS}{tag}")
+            if el is not None:
+                scaling.remove(el)
+
+
 def _monthly_values(monthly, month_num, key):
     """month_num-2..month_num 3개월 값. 개별 월이 비어 있으면(None) 0으로 채워
     chart.replace_data()에 None이 들어가 차트가 깨지는 것을 막는다."""
@@ -930,6 +1000,7 @@ def fill_follower_trend_charts(prs, wb, wb_data, target_month, confirm):
                 cd.categories = labels
                 cd.add_series(series_names[0], values)
                 chart.replace_data(cd)
+                _set_series_number_format(chart, series_names[0], "#,##0")
             elif len(cats) == 3 and not any(_DATE_CAT_RE.match(str(c)) for c in cats):
                 # 인스타그램 '월간 팔로워 수 추이' 차트: 카테고리가 'n월' 형식(연도 없음).
                 found_monthly = True
@@ -941,6 +1012,7 @@ def fill_follower_trend_charts(prs, wb, wb_data, target_month, confirm):
                 cd.categories = labels
                 cd.add_series("팔로워", values)
                 chart.replace_data(cd)
+                _set_series_number_format(chart, "팔로워", "#,##0")
             elif _DATE_CAT_RE.match(str(cats[0])):
                 found_daily = True
                 if not daily:
@@ -958,11 +1030,19 @@ def fill_follower_trend_charts(prs, wb, wb_data, target_month, confirm):
                     cd.categories = labels
                     cd.add_series(bar_name, values)
                     chart.replace_data(cd)
+                _set_series_number_format(chart, bar_name, "#,##0")
                 all_series_names = [s.name for s in chart.series]
                 delta_name = next((n for n in all_series_names if n != bar_name), None)
                 if delta_name:
                     deltas = [None] + [values[i] - values[i - 1] for i in range(1, len(values))]
                     _rewrite_series_by_name(chart, delta_name, labels, deltas)
+                    # 증감 부호에 따라 빨간 세모(▲, 증가)/파란 세모(▼, 감소)로 표시.
+                    _set_series_number_format(
+                        chart, delta_name, '[Red]"▲"#,##0;[Blue]"▼"#,##0;"-"')
+                    # 증감 축은 전월 값 범위에 맞춰 고정 min/max가 박혀있던 경우가
+                    # 있어(예: 전월 급등일 기준 ±600) 이번 달 값 범위에 맞게
+                    # 자동으로 다시 스케일되도록 고정값을 지운다.
+                    _clear_axis_fixed_scale(chart, "lineChart")
     if not found_monthly:
         confirm.add("PPT/팔로워", "월간 팔로워 수 추이", "전월 PPT에서 월간 팔로워 추이 차트를 찾지 못함(템플릿 구성 확인 필요)")
     if not found_blog_monthly:
@@ -975,16 +1055,14 @@ def fill_follower_trend_charts(prs, wb, wb_data, target_month, confirm):
 # 인스타그램 팔로워 성별/연령 비중 (네이티브 차트) 채움
 # ---------------------------------------------------------------------------
 
-def _force_percent_format(chart):
+def _force_percent_format(chart, series_names):
     """차트 값은 0~1 사이 소수(0.492)로 저장하지만, replace_data() 후에는 데이터
     레이블/축 서식이 초기화(일반 숫자 표시)될 수 있다. 퍼센트로 보이도록 서식을
-    명시적으로 다시 지정한다(예: 0.492 -> '49.2%')."""
-    try:
-        dls = chart.plots[0].data_labels
-        dls.number_format = "0.0%"
-        dls.number_format_is_linked = False
-    except Exception:
-        pass
+    명시적으로 다시 지정한다(예: 0.492 -> '49.2%'). 포인트별 오버라이드가 있는
+    series(예: 성별 파이차트)는 plot 레벨 서식만으로는 실제 PowerPoint 렌더링에
+    반영되지 않아 series/포인트 단위로 직접 주입한다."""
+    for name in series_names:
+        _set_series_number_format(chart, name, "0.0%")
     try:
         axis = chart.value_axis
         axis.tick_labels.number_format = "0.0%"
@@ -1015,7 +1093,7 @@ def fill_gender_age_charts(prs, target, confirm):
                 cd.categories = cats
                 cd.add_series("성별", (target.male_total / 100, target.female_total / 100))
                 chart.replace_data(cd)
-                _force_percent_format(chart)
+                _force_percent_format(chart, ["성별"])
                 filled.append("성별 파이차트")
             elif len(cats) == len(target.age_labels) and len(chart.plots[0].series) == 2:
                 cd = CategoryChartData()
@@ -1023,7 +1101,7 @@ def fill_gender_age_charts(prs, target, confirm):
                 cd.add_series("남", [v / 100 for v in target.male_by_age])
                 cd.add_series("녀", [v / 100 for v in target.female_by_age])
                 chart.replace_data(cd)
-                _force_percent_format(chart)
+                _force_percent_format(chart, ["남", "녀"])
                 filled.append("연령대별 성별 막대차트")
     if not filled:
         confirm.add("PPT/팔로워 비중", "성별·연령 차트",
