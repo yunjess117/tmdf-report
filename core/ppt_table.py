@@ -60,9 +60,14 @@ def set_cell_text(cell, text, keep_format=True):
 
 
 def set_cell_hyperlink(cell, url):
-    p = cell.text_frame.paragraphs[0]
-    if p.runs:
-        p.runs[0].hyperlink.address = url
+    """셀 텍스트(예: '[바로가기]')가 실제로는 '[' / '바로가기' / ']'처럼 여러
+    run으로 쪼개져 있는 경우가 있다 - run[0]에만 링크를 걸면 사람이 실제로
+    클릭하는 가운데 글자는 예전 링크를 그대로 물고 있게 된다(전월 PPT의 원래
+    링크가 남아있는 것처럼 보이는 버그의 원인이었음). 셀 안 모든 run에 똑같이
+    새 링크를 걸어서 어느 글자를 클릭해도 같은 곳으로 가도록 한다."""
+    for p in cell.text_frame.paragraphs:
+        for run in p.runs:
+            run.hyperlink.address = url
 
 
 def set_run_color(cell, color: RGBColor):
