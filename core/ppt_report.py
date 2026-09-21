@@ -649,10 +649,18 @@ def fill_ad_overview_table(table, src: XlsxSource, confirm):
                 cur_v = budget_total
         set_cell_text(table.rows[r].cells[1], _fmt_num(prev_v) if prev_v is not None else CONFIRM_NEEDED)
         set_cell_text(table.rows[r].cells[2], _fmt_num(cur_v) if cur_v is not None else CONFIRM_NEEDED)
-        if chg_v is not None:
-            set_cell_text(table.rows[r].cells[3], f"{chg_v:+.1f}%")
+        chg_cell = table.rows[r].cells[3]
+        if chg_v is None:
+            set_cell_text(chg_cell, CONFIRM_NEEDED)
+            set_run_color(chg_cell, NEUTRAL_COLOR)
+        elif chg_v > 0:
+            set_cell_text(chg_cell, f"▲ {chg_v:.1f}%")
+            set_run_color(chg_cell, UP_COLOR)
+        elif chg_v < 0:
+            set_cell_text(chg_cell, f"▼ {abs(chg_v):.1f}%")
+            set_run_color(chg_cell, DOWN_COLOR)
         else:
-            set_cell_text(table.rows[r].cells[3], CONFIRM_NEEDED)
+            set_cell_text(chg_cell, "-")
 
 
 def fill_budget_summary_table(table, src: XlsxSource):
