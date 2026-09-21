@@ -290,8 +290,11 @@ with col_raw, st.container(border=True, key="panel_raw"):
 # 오른쪽: 월간보고서 PPT
 # =============================================================================
 with col_ppt, st.container(border=True, key="panel_ppt"):
-    st.markdown(f'<div class="sheet-title" style="color:{COLORS["purple"]};">월간보고서 PPT</div>', unsafe_allow_html=True)
-    st.caption("확인 필요 항목을 채운 로우데이터 최종본을 올려주세요.")
+    st.markdown(
+        f'<div class="sheet-title" style="color:{COLORS["purple"]};">월간보고서 PPT '
+        f'<span style="font-size:12px;font-weight:400;color:{TEXT_SECONDARY};">'
+        f'(확인 필요 항목을 채운 로우데이터 최종본을 올려주세요)</span></div>',
+        unsafe_allow_html=True)
 
     section_header(1, "입력 파일", "전월 PPT 템플릿과 이번 달 최종 로우데이터를 업로드하세요. ★는 필수입니다.", "purple")
     cp1, cp2 = st.columns(2)
