@@ -568,8 +568,11 @@ def update_operations_summary(wb, target_month, ad_totals_by_type):
     # 그대로 두면 자동으로 최신 값을 반영한다.
     ws.cell(row=32, column=2, value=target_month)
 
-    # 월간 광고 요약(행36 헤더 + 37~49)은 전월 최종본에서도 라이브 수식이 아니라 사람이
-    # 채워 넣는 스냅샷 표라(증감만 수식) 여기서도 같은 방식으로 값을 옮기고 새 값을 채운다.
+    # 월간 광고 요약(행36 헤더 + 37~49)의 전월/당월(C/D열)은 전월 최종본에서도
+    # 사람이 채워 넣는 스냅샷 값이라 여기서도 같은 방식으로 값을 옮기고 새 값을
+    # 채운다. 증감률(E열)은 파이썬이 계산한 숫자를 박아넣지 않고 C/D열을 참조하는
+    # 수식으로 써서(아래 _set 참고), 나중에 C/D열 값을 손으로 고쳐도 증감률이
+    # 자동으로 다시 계산되게 한다.
     prev_label = ws.cell(row=36, column=4).value
     prev_values = {r: ws.cell(row=r, column=4).value for r in range(37, 50)}
     ws.cell(row=36, column=3, value=prev_label)
@@ -581,7 +584,10 @@ def update_operations_summary(wb, target_month, ad_totals_by_type):
         old = ws.cell(row=row, column=3).value
         ws.cell(row=row, column=4, value=new_value)
         if isinstance(old, (int, float)) and old and isinstance(new_value, (int, float)):
-            ws.cell(row=row, column=5, value=(new_value - old) / old * 100)
+            # 파이썬이 계산한 값을 그대로 적지 않고, 엑셀에서 C/D열을 직접 참조하는
+            # 살아있는 수식으로 써서 사람이 나중에 셀 값을 손으로 고쳐도 증감률이
+            # 자동으로 다시 계산되게 한다.
+            ws.cell(row=row, column=5, value=f"=(D{row}-C{row})/C{row}*100")
         else:
             ws.cell(row=row, column=5, value=CONFIRM_NEEDED)
 
